@@ -1,0 +1,99 @@
+name:                ghc-server
+version:             0.1
+synopsis:            Persistent GHC powered background server for FAST haskell development tools
+description:         
+license:             MIT
+author:              Benno Fünfstück
+maintainer:          benno.fuenfstueck@gmail.com
+copyright:           Benno Fünfstück
+category:            Development
+homepage:            https://github.com/bennofs/ghc-server/
+bug-reports:         https://github.com/bennofs/ghc-server/issues/
+build-type:          Custom
+cabal-version:       >=1.10
+
+source-repository head
+  type:                git
+  location:            https://github.com/bennofs/ghc-server
+
+executable ghc-server
+  hs-source-dirs:      src
+  ghc-options:         -Wall
+  main-is:             Main.hs
+  default-language:    Haskell2010
+  other-modules:
+      Paths_ghc_server
+    , Daemon
+    , Message
+    , Util
+    , Server.Handler
+    , Server.Compile
+    , Server.Configure
+    , Server.Errors
+    , Server.Main
+    , Server.TargetMap
+  build-depends:
+      base
+    , ghc >= 7.4
+    , mmorph
+    , ghc-paths
+    , lens
+    , stm
+    , transformers
+    , mtl
+    , text
+    , transformers-base
+    , filepath
+    , directory
+    , Cabal
+    , containers
+    , pipes >= 4.0
+    , pipes-concurrency
+    , pipes-network
+    , pipes-aeson
+    , optparse-applicative
+    , lifted-base
+    , monad-extras
+    , monad-control
+    , transformers-base
+    , data-default
+    , aeson
+    , network
+    , bytestring
+    , monad-loops
+    , unix
+    , async
+    , bifunctors
+    , dlist
+    , dynamic-cabal
+    , fsnotify
+    , system-filepath
+
+test-suite ghc-server-tests 
+  main-is:        Main.hs
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: tests
+  default-language: Haskell2010
+  build-depends:
+      base
+    , hcltest
+    , unix
+    , tasty
+    , directory
+    , filepath
+    , transformers
+    , text
+
+test-suite doctests
+  type:    exitcode-stdio-1.0
+  main-is: doctests.hs
+  default-language: Haskell2010
+  build-depends:
+      base
+    , directory >= 1.0
+    , doctest >= 0.9.1
+    , filepath
+  ghc-options: -Wall -threaded
+  if impl(ghc<7.6.1)
+    ghc-options: -Werror
+  hs-source-dirs: tests
