@@ -13,7 +13,7 @@ before_install:
 
 install:
  - cabal-$CABALVER install --only-dependencies --enable-tests --enable-benchmarks -j
- - sudo ln -s $(which cabal-$CABALVER) /usr/bin
+ - sudo ln -s $(which cabal-$CABALVER) /usr/bin/cabal
 
 script:
  - travis/script.sh && cat log
