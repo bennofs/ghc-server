@@ -13,10 +13,10 @@ before_install:
 
 install:
  - cabal-$CABALVER install --only-dependencies --enable-tests --enable-benchmarks -j
- - ln -s $(which cabal-$CABALVER) ~/.cabal/bin/cabal
+ - sudo ln -s $(which cabal-$CABALVER) /usr/bin
 
 script:
- - travis/script.sh
+ - travis/script.sh && cat log
  - hlint src
 
 matrix:
