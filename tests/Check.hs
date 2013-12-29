@@ -34,7 +34,7 @@ startServer = testExitCode Nothing 1000 ghcserver ["-v", "3","-f","log", "admin"
 withLog :: HClTest Trace () -> HClTest Trace ()
 withLog x = x <|> showLog
   where  showLog :: HClTest Trace ()
-         showLog = testStep "Log: " $ liftIO (readFile "log") >>= mapM_ traceMsg . lines >> mzero
+         showLog = testStep "Log: " $ liftIO (readFile "log") >>= traceMsg >> mzero
 
 testSampleError :: HClTest Trace ()
 testSampleError = do
