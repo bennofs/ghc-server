@@ -2,6 +2,7 @@
 module Check where
 
 import           Build_ghc_server_tests
+import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.List
@@ -29,6 +30,11 @@ copySources x = liftIO $ copyFilesHere (head getSrcDirs </> x)
 
 startServer :: HClTest Trace ()
 startServer = testExitCode Nothing 1000 ghcserver ["-v", "3","-f","log", "admin", "start"] ExitSuccess
+
+withLog :: HClTest Trace () -> HClTest Trace ()
+withLog x = x <|> showLog
+  where  showLog :: HClTest Trace ()
+         showLog = testStep "Log: " $ liftIO (readFile "log") >>= mapM_ traceMsg . lines >> mzero
 
 testSampleError :: HClTest Trace ()
 testSampleError = do
@@ -76,7 +82,7 @@ tests = testGroup "check"
       forM_ ["src", "independent-src", "library-tests"] $ \dir ->  
         testExitCode (Just dir) 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
 
-  , hcltest "cabal project support" $ do
+  , hcltest "cabal project support" $ withLog $ do
       copySources "cabal-project"
       startServer
       testFailure Nothing 1 ["src/LibraryModule.hs"]
@@ -91,7 +97,7 @@ tests = testGroup "check"
         , testSuccess Nothing ["src/LibraryModule.hs"]
         ] 
 
-  , hcltest "self" $ do
+  , hcltest "self" $ withLog $ do
       -- Copy ourselves, so we don't accidently mess up the project!
       sources <- liftIO $ do
         forM_ ["src", "dist", "tests", ".cabal-sandbox"] $ \x -> do

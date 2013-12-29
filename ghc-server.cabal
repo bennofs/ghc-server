@@ -65,7 +65,7 @@ executable ghc-server
     , async
     , bifunctors
     , dlist
-    , dynamic-cabal
+    , dynamic-cabal >= 0.2
     , fsnotify
     , system-filepath
 
