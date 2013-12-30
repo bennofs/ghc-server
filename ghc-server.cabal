@@ -45,7 +45,6 @@ executable ghc-server
     , transformers-base
     , filepath
     , directory
-    , Cabal
     , containers
     , pipes >= 4.0
     , pipes-concurrency
