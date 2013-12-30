@@ -97,11 +97,13 @@ forkUnixS f s p = do
   -- be ready to accept connections right after the return of this function. That's the reason why
   -- the socket is already bound here.
   sock <- socket AF_UNIX Stream 0
-  bind sock $ SockAddrUnix p
-  listen sock maxListenQueue
-
-  -- Daemonize
-  void $ forkProcess $ child1 sock
+  ei <- try $ bind sock $ SockAddrUnix p
+  case ei of
+    Left (e :: IOException) -> putStrLn "ghc-server:forkUnixS: Ignored IO exception when trying to bind socket"
+    Right () -> do
+      listen sock maxListenQueue
+      -- Daemonize
+      void $ forkProcess $ child1 sock
 
   where child1 sock = do
           void createSession
