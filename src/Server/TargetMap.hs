@@ -17,6 +17,10 @@ import           Distribution.Client.Dynamic
 import           System.Directory
 import           System.FilePath
 
+{- $setup
+>>> import Data.Default
+-}
+
 -- | A target map maps source directories to targets which specify that directory or a parent in the
 -- hs-source-dirs field.
 data TargetMap = TargetMap !(Maybe [Target]) !(M.Map String TargetMap) deriving (Read, Show)
@@ -29,10 +33,10 @@ data TargetMap = TargetMap !(Maybe [Target]) !(M.Map String TargetMap) deriving 
 --
 -- >>> :{
 --  let
---    test = Target (TestSuite "test") [] ["tests"] [] [] [] False False
---    test2 = Target (TestSuite "test2") [] ["tests"] [] [] [] False False
---    specific = Target (TestSuite "specific") [] ["tests/specific"] [] [] [] False False
---    test3 = Target (TestSuite "test3") [] ["src", "tests"] [] [] [] False False
+--    test     = def { info = TestSuite "test"     Nothing, sourceDirs = ["tests"] }
+--    test2    = def { info = TestSuite "test2"    Nothing, sourceDirs = ["tests"] }
+--    specific = def { info = TestSuite "specific" Nothing, sourceDirs = ["tests/specific"] }
+--    test3    = def { info = TestSuite "test3"    Nothing, sourceDirs = ["src", "tests"] }
 --    m = fromTargets [test, test2, specific, test3]
 -- :}
 --
