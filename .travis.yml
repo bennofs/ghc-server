@@ -8,7 +8,7 @@ before_install:
  - sudo apt-get update
  - sudo apt-get install cabal-install-$CABALVER ghc-$GHCVER hlint
  - cabal-$CABALVER update
- - cabal-$CABALVER install happy -j
+ - cabal-$CABALVER install happy Cabal-$(cabal-$CABALVER --version | sed -nre "s/using version (([0123456789]|\\.)*) of the Cabal library/\\1/gp") -j
  - export PATH=/opt/ghc/$GHCVER/bin:~/.cabal/bin:$PATH
 
 install:
