@@ -18,11 +18,11 @@ ghcserver :: FilePath
 ghcserver = getDistDir </> "build/ghc-server/ghc-server"
 
 testFailure :: Maybe FilePath -> Int -> [String] -> HClTest Trace ()
-testFailure wd c a = testExitCode wd 1000 ghcserver (defaultOpts ++ a) $ ExitFailure c
+testFailure wd c a = withLog $ testExitCode wd 1000 ghcserver (defaultOpts ++ a) $ ExitFailure c
   where defaultOpts = ["-v","3","-f","log","check"]
 
 testSuccess :: Maybe FilePath -> [String] -> HClTest Trace ()
-testSuccess wd a = testExitCode wd 1000 ghcserver (defaultOpts ++ a) ExitSuccess
+testSuccess wd a = withLog $ testExitCode wd 1000 ghcserver (defaultOpts ++ a) ExitSuccess
   where defaultOpts = ["-v","3","-f", "log","check"]
 
 copySources :: FilePath -> HClTest w ()
@@ -82,7 +82,7 @@ tests = testGroup "check"
       forM_ ["src", "independent-src", "library-tests"] $ \dir ->  
         testExitCode (Just dir) 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
 
-  , hcltest "cabal project support" $ withLog $ do
+  , hcltest "cabal project support" $ do
       copySources "cabal-project"
       startServer
       testFailure Nothing 1 ["src/LibraryModule.hs"]
@@ -97,7 +97,7 @@ tests = testGroup "check"
         , testSuccess Nothing ["src/LibraryModule.hs"]
         ] 
 
-  , hcltest "self" $ withLog $ do
+  , hcltest "self" $ do
       -- Copy ourselves, so we don't accidently mess up the project!
       sources <- liftIO $ do
         forM_ ["src", "dist", "tests", ".cabal-sandbox"] $ \x -> do

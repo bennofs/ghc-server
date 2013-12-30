@@ -159,7 +159,8 @@ runServer s = do
   let stopWatching = do
         managers <- withEnv $ uses packageDBWatchers M.elems
         liftIO $ mapM_ stopManager managers >> putStrLn "Shutdown of Server monad finished."
-
+  
+  putStrLn $ "Using libdir: " ++ GHC.Paths.libdir
   res <- withWatchCabal setupConfDirty $ flip runReaderT (Config ses errs setupConfDirty pkgDBDirty) $ flip evalStateT def $ unGhcServerM $ flip finally stopWatching $ do
     GHC.initGhcMonad $ Just GHC.Paths.libdir
     dflags <- GHC.getSessionDynFlags >>= GHC.setSessionDynFlags >> GHC.getSessionDynFlags -- Init the session
