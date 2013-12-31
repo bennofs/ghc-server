@@ -18,7 +18,7 @@ module Server.Handler
 import qualified Config
 import           Control.Applicative
 import           Control.Concurrent.MVar
-import           Control.Exception.Lifted hiding (Handler)
+import qualified Control.Exception.Lifted as E hiding (Handler)
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Base
@@ -109,8 +109,8 @@ instance MonadIO (GhcServerM t) => MonadUtils.MonadIO (GhcServerM t) where
   liftIO = Control.Monad.Reader.liftIO
 
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t)) => Exception.ExceptionMonad (GhcServerM t) where
-  gcatch = catch
-  gmask f = mask $ \g -> f g -- Cannot be eta-reduced because of higher rank types
+  gcatch = E.catch
+  gmask f = E.mask $ \g -> f g -- Cannot be eta-reduced because of higher rank types
 
 instance GhcMonad.GhcMonad (GhcServerM t) => DynFlags.HasDynFlags (GhcServerM t) where
   getDynFlags = GhcMonad.getSessionDynFlags
@@ -161,7 +161,7 @@ runServer s = do
         liftIO $ mapM_ stopManager managers >> putStrLn "Shutdown of Server monad finished."
   
   putStrLn $ "Using libdir: " ++ GHC.Paths.libdir
-  res <- withWatchCabal setupConfDirty $ flip runReaderT (Config ses errs setupConfDirty pkgDBDirty) $ flip evalStateT def $ unGhcServerM $ flip finally stopWatching $ do
+  res <- withWatchCabal setupConfDirty $ flip runReaderT (Config ses errs setupConfDirty pkgDBDirty) $ flip evalStateT def $ unGhcServerM $ flip E.finally stopWatching $ do
     GHC.initGhcMonad $ Just GHC.Paths.libdir
     dflags <- GHC.getSessionDynFlags >>= GHC.setSessionDynFlags >> GHC.getSessionDynFlags -- Init the session
     mapM_ watchPackageDB [GlobalDB, UserDB]
