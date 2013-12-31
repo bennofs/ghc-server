@@ -38,7 +38,11 @@ makeLenses ''GHCError
 
 -- | Pretty print a GHC error as a human-readable string.
 showError :: GHCError -> String
+#if __GLASGOW_HASKELL__ >= 706
 showError err = (err ^. renderDoc . flipped) (err ^. style) $ ErrUtils.mkLocMessage (err ^. severity) (err ^. location) (err ^. message)
+#else
+showError err = (err ^. renderDoc . flipped) (err ^. style) $ ErrUtils.mkLocMessage (err ^. location) (err ^. message)
+#endif
 
 -- | Change the location of the error message to be relative to the given directory.
 makeRelativeLocation :: FilePath -> GHCError -> GHCError
