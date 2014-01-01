@@ -16,7 +16,7 @@ install:
  - sudo ln -s $(which cabal-$CABALVER) /usr/bin/cabal
 
 script:
- - travis/script.sh && cat log
+ - travis/script.sh
  - hlint src
 
 matrix:
