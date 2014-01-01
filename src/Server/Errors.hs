@@ -72,6 +72,6 @@ collectErrors :: MVar (DL.DList GHCError) -> DynFlags.LogAction
 collectErrors out dflags sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m $ Outputable.renderWithStyle dflags
 #else
-collectErrors out sev sspan pprstyle doc m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
+collectErrors out sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m Outputable.renderWithStyle
 #endif
