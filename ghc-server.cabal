@@ -1,8 +1,11 @@
 name:                ghc-server
 version:             0.1
 synopsis:            Persistent GHC powered background server for FAST haskell development tools
-description:         
-license:             MIT
+description:         ghc-server is a program similar to hdevtools, but with better cache invalidation
+		     and cabal support. It spawns a server that caches information between multiple
+		     invocations of the client and thus allows for faster syntax checking.
+license:             BSD3
+license-file:        LICENSE
 author:              Benno Fünfstück
 maintainer:          benno.fuenfstueck@gmail.com
 copyright:           Benno Fünfstück
@@ -33,7 +36,7 @@ executable ghc-server
     , Server.Main
     , Server.TargetMap
   build-depends:
-      base
+      base >= 4.4 && < 5
     , ghc >= 7.4
     , mmorph
     , ghc-paths
