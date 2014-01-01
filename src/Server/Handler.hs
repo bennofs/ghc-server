@@ -1,4 +1,5 @@
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -43,7 +44,6 @@ import qualified HscTypes
 import qualified MonadUtils
 import qualified Panic
 import           Server.Errors
-import           Server.TargetMap
 import qualified Server.TargetMap as TM
 import           System.Directory
 import           System.FSNotify
@@ -64,7 +64,7 @@ data Env = Env
   , _packageDBWatchers :: !(M.Map PackageDB WatchManager)
 
     -- | The targets from the cabal file, if we loaded it.
-  , _cabalTargets :: TargetMap
+  , _cabalTargets :: TM.TargetMap
 
     -- | Should we enable cabal support?
   , _cabalEnabled :: Bool
@@ -112,8 +112,10 @@ instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t)) => Exception.
   gcatch = E.catch
   gmask f = E.mask $ \g -> f g -- Cannot be eta-reduced because of higher rank types
 
+#if __GLASGOW_HASKELL__ >= 706
 instance GhcMonad.GhcMonad (GhcServerM t) => DynFlags.HasDynFlags (GhcServerM t) where
   getDynFlags = GhcMonad.getSessionDynFlags
+#endif
 
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t), MonadIO (ServerCoreM t)) => GhcMonad.GhcMonad (GhcServerM t) where
   getSession = readVar ghcSession
