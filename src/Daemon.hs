@@ -99,7 +99,7 @@ forkUnixS f s p = do
   sock <- socket AF_UNIX Stream 0
   ei <- E.try $ bind sock $ SockAddrUnix p
   case ei of
-    Left (_ :: E.IOException) -> putStrLn "ghc-server:forkUnixS: Ignored IO exception when trying to bind socket"
+    Left (_ :: E.IOException) -> hPutStrLn stderr "ghc-server:forkUnixS: Ignored IO exception when trying to bind socket"
     Right () -> do
       listen sock maxListenQueue
       -- Daemonize
