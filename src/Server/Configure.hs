@@ -160,7 +160,7 @@ getPackageDatabases dflags = map fromGHCPkgDB $ DynFlags.extraPkgConfs dflags [D
         fromGHCPkgDB DynFlags.GlobalPkgConf = GlobalDB
 
 addPackageDB' :: PackageDB -> DynFlags.DynFlags -> DynFlags.DynFlags
-addPackageDB db dflags = dflags { GHC.extraPkgConfs = (toGHCPkgDB db:) . GHC.extraPkgConfs dflags }
+addPackageDB' db dflags = dflags { GHC.extraPkgConfs = (toGHCPkgDB db:) . GHC.extraPkgConfs dflags }
   where toGHCPkgDB :: PackageDB -> DynFlags.PkgConfRef
         toGHCPkgDB (SpecificDB x) = DynFlags.PkgConfFile x
         toGHCPkgDB UserDB = DynFlags.UserPkgConf

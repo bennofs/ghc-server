@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module Check where
 
 import           Build_ghc_server_tests
@@ -13,6 +14,13 @@ import           System.Exit
 import           System.FilePath
 import           Test.Tasty
 import           Test.Tasty.HClTest
+
+packagedb :: String
+#if __GLASGOW_HASKELL__ >= 706
+packagedb = "package-db"
+#else
+packagedb = "package-conf"
+#endif
 
 ghcserver :: FilePath
 ghcserver = getDistDir </> "build/ghc-server/ghc-server"
@@ -70,9 +78,12 @@ tests = testGroup "check"
       copySources "db-reloading"
       startServer
       testExitCode Nothing 1000 "ghc-pkg" ["init", "pkgdb"] ExitSuccess
-      testExitCode Nothing 1000 ghcserver ["-v", "3", "admin", "ghc", "package-db pkgdb"] ExitSuccess
+      testExitCode Nothing 1000 ghcserver ["-v", "3", "admin", "ghc", packagedb ++ " pkgdb"] ExitSuccess
       testFailure Nothing 1 ["Main.hs"]
-      testExitCode Nothing 1000 "cabal" ["install", "acme-dont", "--package-db=clear", "--package-db=global", "--package-db=pkgdb"] ExitSuccess
+      -- WORKAROUND: There is a crazy bug in cabal 1.16 where installing directly (without going through unpack first)
+      -- causes ghc-pkg to fail with a file not found error.
+      testExitCode Nothing 1000 "cabal" ["unpack", "acme-dont-1.1"] ExitSuccess
+      testExitCode (Just "acme-dont-1.1") 1000 "cabal" ["install", "--package-db=clear", "--package-db=global", "--package-db=../pkgdb"] ExitSuccess
       testExitCode Nothing 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
       testSuccess Nothing ["Main.hs"]
 
