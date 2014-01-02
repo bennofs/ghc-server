@@ -1,4 +1,5 @@
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -18,7 +19,7 @@ module Server.Handler
 import qualified Config
 import           Control.Applicative
 import           Control.Concurrent.MVar
-import           Control.Exception.Lifted hiding (Handler)
+import qualified Control.Exception.Lifted as E hiding (Handler)
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Base
@@ -43,7 +44,6 @@ import qualified HscTypes
 import qualified MonadUtils
 import qualified Panic
 import           Server.Errors
-import           Server.TargetMap
 import qualified Server.TargetMap as TM
 import           System.Directory
 import           System.FSNotify
@@ -64,7 +64,7 @@ data Env = Env
   , _packageDBWatchers :: !(M.Map PackageDB WatchManager)
 
     -- | The targets from the cabal file, if we loaded it.
-  , _cabalTargets :: TargetMap
+  , _cabalTargets :: TM.TargetMap
 
     -- | Should we enable cabal support?
   , _cabalEnabled :: Bool
@@ -109,11 +109,13 @@ instance MonadIO (GhcServerM t) => MonadUtils.MonadIO (GhcServerM t) where
   liftIO = Control.Monad.Reader.liftIO
 
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t)) => Exception.ExceptionMonad (GhcServerM t) where
-  gcatch = catch
-  gmask f = mask $ \g -> f g -- Cannot be eta-reduced because of higher rank types
+  gcatch = E.catch
+  gmask f = E.mask $ \g -> f g -- Cannot be eta-reduced because of higher rank types
 
+#if __GLASGOW_HASKELL__ >= 706
 instance GhcMonad.GhcMonad (GhcServerM t) => DynFlags.HasDynFlags (GhcServerM t) where
   getDynFlags = GhcMonad.getSessionDynFlags
+#endif
 
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t), MonadIO (ServerCoreM t)) => GhcMonad.GhcMonad (GhcServerM t) where
   getSession = readVar ghcSession
@@ -159,8 +161,9 @@ runServer s = do
   let stopWatching = do
         managers <- withEnv $ uses packageDBWatchers M.elems
         liftIO $ mapM_ stopManager managers >> putStrLn "Shutdown of Server monad finished."
-
-  res <- withWatchCabal setupConfDirty $ flip runReaderT (Config ses errs setupConfDirty pkgDBDirty) $ flip evalStateT def $ unGhcServerM $ flip finally stopWatching $ do
+  
+  putStrLn $ "Using libdir: " ++ GHC.Paths.libdir
+  res <- withWatchCabal setupConfDirty $ flip runReaderT (Config ses errs setupConfDirty pkgDBDirty) $ flip evalStateT def $ unGhcServerM $ flip E.finally stopWatching $ do
     GHC.initGhcMonad $ Just GHC.Paths.libdir
     dflags <- GHC.getSessionDynFlags >>= GHC.setSessionDynFlags >> GHC.getSessionDynFlags -- Init the session
     mapM_ watchPackageDB [GlobalDB, UserDB]

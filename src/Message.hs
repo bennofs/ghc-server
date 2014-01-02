@@ -86,12 +86,12 @@ deriveJSON defaultOptions ''Request
 jsonP :: (FromJSON o) => (String -> IO Bool) -> Pipe BS.ByteString o IO ()
 jsonP f = do
   -- Workaround: eitherDecodeStrict' is broken in latest aeson, so we use eitherDecode'
-  c <- fmap (eitherDecode' . LBS.fromStrict) await >>= either (lift . f) (yield >=> const (return True))
+  c <- fmap (eitherDecode' . LBS.fromChunks . return) await >>= either (lift . f) (yield >=> const (return True))
   when c $ jsonP f
 
 -- | Serializes a stream of requests to ByteStrings.
 jsonS :: (ToJSON i, Monad m) => Pipe i BS.ByteString m ()
-jsonS = P.map (LBS.toStrict . encode)
+jsonS = P.map (BS.concat . LBS.toChunks . encode)
 
 -- | A pipe that takes arbitrary chunks of data and produces continous bytestrings, splitting the input on the given separator.
 -- The separator is not included in the result. If the input ends with the separator, an empty string is yielded as the last

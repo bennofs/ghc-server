@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module Server.Configure 
   ( addFlags
   , loadCabal
@@ -14,6 +15,7 @@ import           Control.Applicative
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Data.List
 import           Data.Monoid
 import qualified Data.Text as T
 import           Data.Version
@@ -44,7 +46,7 @@ addFlags :: [String] -> Server (Maybe String)
 addFlags flags = Exception.ghandle handler $ do
   dflags <- GHC.getSessionDynFlags
   (dflags', _, _) <- GHC.parseDynamicFlags dflags $ map GHC.noLoc $ ["-Wall", "-O0"] ++ flags
-  let dbs = map fromGHCPkgDB $ DynFlags.extraPkgConfs dflags' [DynFlags.UserPkgConf, DynFlags.GlobalPkgConf]
+  let dbs = getPackageDatabases dflags'
   liftIO $ putStrLn $ "Watching package databases: " ++ show dbs
   onlyWatchPackageDBs dbs
   Nothing <$ GHC.setSessionDynFlags dflags'
@@ -53,27 +55,14 @@ addFlags flags = Exception.ghandle handler $ do
 
   where handler e = return $ Just $ GHC.showGhcException e ""
 
--- | Convert a ghc package database to a package db
-fromGHCPkgDB :: DynFlags.PkgConfRef -> PackageDB
-fromGHCPkgDB (DynFlags.PkgConfFile x) = SpecificDB x
-fromGHCPkgDB DynFlags.UserPkgConf = UserDB
-fromGHCPkgDB DynFlags.GlobalPkgConf = GlobalDB
-
--- | Convert a package db to a ghc package database
-toGHCPkgDB :: PackageDB -> DynFlags.PkgConfRef
-toGHCPkgDB (SpecificDB x) = DynFlags.PkgConfFile x
-toGHCPkgDB UserDB = DynFlags.UserPkgConf
-toGHCPkgDB GlobalDB = DynFlags.GlobalPkgConf
-
 -- | Add a package database. This database will be added to the top of the stack, so it will override
 -- all previous package databases when there is an overlap.
 addPackageDB :: PackageDB -> Server ()
 addPackageDB db = do
   watchPackageDB db
   dflags <- GHC.getSessionDynFlags
-  void $ GHC.setSessionDynFlags dflags
+  void $ GHC.setSessionDynFlags $ addPackageDB' db dflags
     { GHC.pkgDatabase = Nothing
-    , GHC.extraPkgConfs = (toGHCPkgDB db:) . GHC.extraPkgConfs dflags
     }
 
 -- | Only use the given package databases, no other ones. Removes all databases
@@ -83,9 +72,8 @@ onlyPackageDBs dbs = do
   liftIO $ putStrLn $ "Using only package DBs: " ++ show dbs
   onlyWatchPackageDBs dbs
   dflags <- GHC.getSessionDynFlags
-  void $ GHC.setSessionDynFlags dflags
+  void $ GHC.setSessionDynFlags $ flip (foldl' $ flip addPackageDB') dbs $ clearPackageDBs $ dflags
     { GHC.pkgDatabase = Nothing
-    , GHC.extraPkgConfs = const $ map toGHCPkgDB dbs
     }
 
 -- | Load settings from the cabal project. This assumes that the file "dist/setup-config" exists and the
@@ -101,7 +89,7 @@ loadCabal = do
   status "loadCabal" 2 $ "Using package databases: " <> T.pack (show pkgDBs)
   lift $ onlyPackageDBs pkgDBs
 
-  importDirs <- liftIO $ filterM doesDirectoryExist $ "dist/build/autogen" : [p | tgt <- tgts, name tgt == Library, p <- sourceDirs tgt]
+  importDirs <- liftIO $ filterM doesDirectoryExist $ "dist/build/autogen" : [p | tgt <- tgts, isLibrary tgt, p <- sourceDirs tgt]
   status "loadCabal" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
 
   includeDirs <- liftIO $ filterM doesFileExist ["dist/build/autogen/cabal_macros.h"]
@@ -160,3 +148,39 @@ resetFlags = do
     withEnv $ compilerFlags .= []
     writeVar setupConfigDirty True
     runHandler initFlags
+
+-- Now the ugly stuff, for compat with GHC 7.4
+
+#if __GLASGOW_HASKELL__ >= 706
+getPackageDatabases :: DynFlags.DynFlags -> [PackageDB]
+getPackageDatabases dflags = map fromGHCPkgDB $ DynFlags.extraPkgConfs dflags [DynFlags.UserPkgConf, DynFlags.GlobalPkgConf]
+  where fromGHCPkgDB :: DynFlags.PkgConfRef -> PackageDB
+        fromGHCPkgDB (DynFlags.PkgConfFile x) = SpecificDB x
+        fromGHCPkgDB DynFlags.UserPkgConf = UserDB
+        fromGHCPkgDB DynFlags.GlobalPkgConf = GlobalDB
+
+addPackageDB' :: PackageDB -> DynFlags.DynFlags -> DynFlags.DynFlags
+addPackageDB' db dflags = dflags { GHC.extraPkgConfs = (toGHCPkgDB db:) . GHC.extraPkgConfs dflags }
+  where toGHCPkgDB :: PackageDB -> DynFlags.PkgConfRef
+        toGHCPkgDB (SpecificDB x) = DynFlags.PkgConfFile x
+        toGHCPkgDB UserDB = DynFlags.UserPkgConf
+        toGHCPkgDB GlobalDB = DynFlags.GlobalPkgConf
+
+clearPackageDBs :: DynFlags.DynFlags -> DynFlags.DynFlags
+clearPackageDBs dflags = dflags { GHC.extraPkgConfs = const [] }
+#else
+getPackageDatabases :: DynFlags.DynFlags -> [PackageDB]
+getPackageDatabases dflags = GlobalDB : mconcat 
+  [ [UserDB | DynFlags.dopt DynFlags.Opt_ReadUserPackageConf dflags]
+  , map SpecificDB $ DynFlags.extraPkgConfs dflags
+  ]
+
+addPackageDB' :: PackageDB -> DynFlags.DynFlags -> DynFlags.DynFlags
+addPackageDB' GlobalDB       dflags = dflags  -- The global package db is always enabled in GHC 7.4
+addPackageDB' UserDB         dflags = DynFlags.dopt_set dflags DynFlags.Opt_ReadUserPackageConf
+addPackageDB' (SpecificDB x) dflags = dflags { GHC.extraPkgConfs = x : GHC.extraPkgConfs dflags }
+
+clearPackageDBs :: DynFlags.DynFlags -> DynFlags.DynFlags
+clearPackageDBs dflags = (DynFlags.dopt_unset dflags DynFlags.Opt_ReadUserPackageConf) { GHC.extraPkgConfs = [] }
+#endif
+

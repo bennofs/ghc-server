@@ -10,7 +10,7 @@ module Daemon
 
 import           Control.Applicative
 import           Control.Concurrent.Async
-import           Control.Exception
+import qualified Control.Exception as E
 import           Control.Monad
 import           Control.Monad.Extra hiding (bind)
 import           Data.Aeson
@@ -44,7 +44,7 @@ startServer f s = do
 
   a <- async $ forever $ do
     putStrLn "Waiting for clients ..."
-    bracket (fmap fst $ accept s) (close >=> const (putStrLn "Closed client connection.")) $ \c -> do
+    E.bracket (fmap fst $ accept s) (close >=> const (putStrLn "Closed client connection.")) $ \c -> do
       putStrLn "Accepted client."
       void $ waitAnyCancel <=< mapM async $ 
        [ do runEffect $ fromSocket c 4096 >-> sepP 0 >-> P.filter (not . BS.null) >-> jsonP onError >-> toOutput reqOut
@@ -53,7 +53,7 @@ startServer f s = do
             putStrLn "Connection terminated by the server."                   
        ]
 
-  f (fromInput reqIn) (toOutput resOut) `finally` cancel a
+  f (fromInput reqIn) (toOutput resOut) `E.finally` cancel a
   putStrLn "Performing garbage collection to exit ..."
   performGC
   putStrLn "Server handler exited. Stopping accept thread ..."
@@ -64,17 +64,17 @@ startServer f s = do
 
 -- | Close a unix socket. This will also unlink the socket file.
 closeUnixSocket :: FilePath -> Socket -> IO ()
-closeUnixSocket p s = putStrLn "Closing socket" >> close s >> removeFile p `catch` \(_ :: IOException) -> return ()
+closeUnixSocket p s = putStrLn "Closing socket" >> close s >> removeFile p `E.catch` \(_ :: E.IOException) -> return ()
 
 -- | @withUnixS p f c@ tries to connect to a unix socket bound to the file @p@. If that fails, it calls f and tries
 -- again after f returned. If a connection can be established, the connected socket is passed to c and the result of
 -- c is returned in a Just. If connecting fails, Nothing is returned.
 withUnixS :: FilePath -> (FilePath -> IO ()) -> (Socket -> IO r) -> IO (Maybe r)
 withUnixS p f c =
-  bracket (socket AF_UNIX Stream 0) close $ \s -> do
-    catch (connect s $ SockAddrUnix p) $ \(_ :: IOException) -> do
+  E.bracket (socket AF_UNIX Stream 0) close $ \s -> do
+    E.catch (connect s $ SockAddrUnix p) $ \(_ :: E.IOException) -> do
       f p
-      catch (connect s $ SockAddrUnix p) $ \(_ :: IOException) -> return ()
+      E.catch (connect s $ SockAddrUnix p) $ \(_ :: E.IOException) -> return ()
     connected <- isConnected s
     if connected
       then Just <$> c s
@@ -97,11 +97,13 @@ forkUnixS f s p = do
   -- be ready to accept connections right after the return of this function. That's the reason why
   -- the socket is already bound here.
   sock <- socket AF_UNIX Stream 0
-  bind sock $ SockAddrUnix p
-  listen sock maxListenQueue
-
-  -- Daemonize
-  void $ forkProcess $ child1 sock
+  ei <- E.try $ bind sock $ SockAddrUnix p
+  case ei of
+    Left (_ :: E.IOException) -> hPutStrLn stderr "ghc-server:forkUnixS: Ignored IO exception when trying to bind socket"
+    Right () -> do
+      listen sock maxListenQueue
+      -- Daemonize
+      void $ forkProcess $ child1 sock
 
   where child1 sock = do
           void createSession
@@ -129,14 +131,14 @@ forkUnixS f s p = do
           putStrLn "Signal handlers set."
 
           -- Now start the server process
-          ei <- try $ flip finally (closeUnixSocket p sock) $ do  
+          ei <- E.try $ flip E.finally (closeUnixSocket p sock) $ do  
             startServer s sock
             putStrLn "Server exited."
  
           case ei of
             Left e
-              | Just (GHC.Signal _) <- fromException e -> putStrLn "Exiting because of signal" >> exitSuccess -- GHC API changes signal handlers, WTF ?!
-              | otherwise                             -> putStrLn "Exception:" >> print e     >> exitFailure 
+              | Just (GHC.Signal _) <- E.fromException e -> putStrLn "Exiting because of signal" >> exitSuccess -- GHC API changes signal handlers, WTF ?!
+              | otherwise                               -> putStrLn "Exception:" >> print e     >> exitFailure 
             Right () -> putStrLn "Exit success." >> exitImmediately ExitSuccess
  
 -- | Send a command to the server. The second argument is the consumer which processes the responses of the server. The socket

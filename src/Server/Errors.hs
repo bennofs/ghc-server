@@ -38,7 +38,11 @@ makeLenses ''GHCError
 
 -- | Pretty print a GHC error as a human-readable string.
 showError :: GHCError -> String
+#if __GLASGOW_HASKELL__ >= 706
 showError err = (err ^. renderDoc . flipped) (err ^. style) $ ErrUtils.mkLocMessage (err ^. severity) (err ^. location) (err ^. message)
+#else
+showError err = (err ^. renderDoc . flipped) (err ^. style) $ ErrUtils.mkLocMessage (err ^. location) (err ^. message)
+#endif
 
 -- | Change the location of the error message to be relative to the given directory.
 makeRelativeLocation :: FilePath -> GHCError -> GHCError
@@ -65,9 +69,9 @@ assertFull a = do
 -- | A GHC LogAction that collects all the errors and writes them to the given output sink.
 collectErrors :: MVar (DL.DList GHCError) -> DynFlags.LogAction
 #if __GLASGOW_HASKELL__ >= 706
-collectErrors out dflags sev sspan pprstyle m = assertFull out >> do void $ modifyMVar_ out $ return . (`DL.snoc` err)
+collectErrors out dflags sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m $ Outputable.renderWithStyle dflags
 #else
-collectErrors out sev sspan pprstyle doc m = assertFull out >> do void $ modifyMVar_ out $ return . (`DL.snoc` err)
+collectErrors out sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m Outputable.renderWithStyle
 #endif
