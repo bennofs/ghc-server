@@ -99,6 +99,8 @@ tests = testGroup "check"
       testFailure Nothing 1 ["src/LibraryModule.hs"]
       -- Test cabal reloading
       testExitCode Nothing 1000 "cabal" ["configure", "--enable-tests", "--enable-benchmarks"] ExitSuccess
+      -- Test that the project is actually buildable, and also preprocess the sources (and generate autogen files)
+      testExitCode Nothing 1000 "cabal" ["build"] ExitSuccess
       randomParallel 3 $ concat $ replicate 5
         [ testSuccess (Just "library-tests")  ["Main.hs"]
         , testSuccess (Just "independent-src") ["Main.hs"]

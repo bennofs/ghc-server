@@ -92,9 +92,6 @@ loadCabal = do
   importDirs <- liftIO $ filterM doesDirectoryExist $ "dist/build/autogen" : [p | tgt <- tgts, isLibrary tgt, p <- sourceDirs tgt]
   status "loadCabal" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
 
-  includeDirs <- liftIO $ filterM doesFileExist ["dist/build/autogen/cabal_macros.h"]
-  status "loadCabal" 2 $ "Including files: " <> T.pack (unwords includeDirs)
-
   let deps = [n ++ '-':showVersion v | (n, Just v) <- concatMap dependencies tgts]
   status "loadCabal" 2 $ "Using dependencies: " <> T.pack (unwords deps)
   
@@ -103,9 +100,7 @@ loadCabal = do
   lift $ void $ GHC.setSessionDynFlags $ (DynFlags.dopt_set dflags GHC.Opt_HideAllPackages)
     { DynFlags.packageFlags = map DynFlags.ExposePackage deps 
     , DynFlags.importPaths = importDirs
-    , DynFlags.settings = (DynFlags.settings dflags)
-        { DynFlags.sOpt_P = reverse $ concatMap (\x -> ["-include", x]) includeDirs
-        }
+ 
     }
 
 -- | Loads the cabal options for a given file. The argument should be an absolute file name.
@@ -113,6 +108,12 @@ loadFileOptions :: FilePath -> Producer Message Handler ()
 loadFileOptions path = do
   status "loadFileOptions" 2 $ "Loading cabal options for file " <> T.pack (show path) <> " ..."
   tgts <- lift $ withEnv $ views cabalTargets $ TM.lookupBest path
+
+  includeDirs <- liftIO $ filterM doesFileExist ["dist/build/autogen/cabal_macros.h"]
+  status "loadCabal" 2 $ "Including files: " <> T.pack (unwords includeDirs)
+
+  importDirs <- liftIO $ filterM doesDirectoryExist ["dist/build/autogen"]
+  status "loadCabal" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
   
   let imps = concatMap sourceDirs tgts
       opts = concatMap ghcOptions tgts
@@ -122,7 +123,10 @@ loadFileOptions path = do
   (dflags', _, _) <- GHC.parseDynamicFlags dflags $ map GHC.noLoc opts 
 
   lift $ void $ GHC.setSessionDynFlags $ dflags'
-     { DynFlags.importPaths = DynFlags.importPaths dflags' ++ imps
+     { DynFlags.importPaths = DynFlags.importPaths dflags' ++ imps ++ importDirs
+     , DynFlags.settings = (DynFlags.settings dflags)
+        { DynFlags.sOpt_P = reverse $ concatMap (\x -> ["-include", x]) includeDirs
+        }
      }
 
 -- | Reload the package database. You should call this function when new packages have been installed.

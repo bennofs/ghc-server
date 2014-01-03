@@ -7,8 +7,10 @@ import           Control.Applicative
 import           Control.Monad
 import           Data.Monoid
 import qualified Data.Text as T
+import qualified Exception
 import qualified GHC
 import           Message
+import qualified Panic
 import           Pipes
 import           Server.Configure
 import           Server.Handler
@@ -29,7 +31,8 @@ compile file = do
   
   s 2 "Compile target"
   let handler err = GHC.printException err *> return GHC.Failed
-  flag <- lift $ GHC.handleSourceError handler $ GHC.load GHC.LoadAllTargets
-  case flag of
-    GHC.Succeeded -> return Success
-    GHC.Failed    -> return $ Failure 1
+  flagE <- lift $ Exception.gtry $ GHC.handleSourceError handler (GHC.load GHC.LoadAllTargets)
+  case flagE of
+    Left e -> Failure 1 <$ yield (CompilerException $ T.pack $ show (e :: Panic.GhcException))
+    Right GHC.Succeeded -> return Success
+    Right GHC.Failed    -> return $ Failure 1
