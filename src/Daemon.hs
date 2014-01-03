@@ -120,9 +120,10 @@ forkUnixS f s p = do
           closeFd fd
 
           -- Stdout or stderr might be block buffered if bound to file. We use stdout/stderr for
-          -- logging purposes, so there should be no buffering.
-          hSetBuffering stdout NoBuffering 
-          hSetBuffering stderr NoBuffering 
+          -- logging purposes, so there should be only line buffering. We don't disable buffering
+          -- entirely, because that results in the lines being mixed up when we use multiple threads.
+          hSetBuffering stdout LineBuffering
+          hSetBuffering stderr LineBuffering
           putStrLn "Server process setup done."         
 
           -- Close the socket if we get killed
