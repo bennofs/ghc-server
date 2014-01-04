@@ -22,6 +22,7 @@ import qualified Control.Exception.Lifted as E hiding (Handler)
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Base
+import           Control.Monad.Extra
 import           Control.Monad.Identity
 import           Control.Monad.Morph
 import           Control.Monad.Reader
@@ -35,7 +36,6 @@ import qualified Data.Set as S
 import           Distribution.Client.Dynamic hiding (packageDBs)
 import qualified DynFlags
 import qualified Exception
-import qualified Filesystem.Path.CurrentOS as P
 import qualified GHC
 import qualified GHC.Paths
 import qualified GhcMonad
@@ -45,8 +45,8 @@ import qualified Panic
 import           Server.Errors
 import qualified Server.TargetMap as TM
 import           System.Directory
-import           System.FSNotify
 import           System.FilePath
+import           System.INotify
 import           System.Info
 
 -- | This type represents the current environment of the server. The environment stays constant in a single request, but it might
@@ -60,7 +60,7 @@ data Env = Env
   , _workingDirectory :: !FilePath    
 
     -- | The watch managers for the package databases. 
-  , _packageDBWatchers :: !(M.Map PackageDB WatchManager)
+  , _packageDBWatchers :: !(M.Map PackageDB WatchDescriptor)
 
     -- | The targets from the cabal file, if we loaded it.
   , _cabalTargets :: TM.TargetMap
@@ -79,6 +79,7 @@ data Config = Config
   , _errors            :: !(MVar (DL.DList GHCError))
   , _setupConfigDirty  :: !(MVar ())
   , _packageDBDirty    :: !(MVar ())  
+  , _inotify           :: !INotify
   }
 makeLenses ''Config
 
@@ -152,16 +153,18 @@ runServer s = do
 
   let stopWatching = do
         managers <- withEnv $ uses packageDBWatchers M.elems
-        liftIO $ mapM_ stopManager managers >> putStrLn "Shutdown of Server monad finished."
+        liftIO $ mapM_ removeWatch managers >> putStrLn "Shutdown of Server monad finished."
   
   putStrLn $ "Using libdir: " ++ GHC.Paths.libdir
-  res <- withWatchCabal setupConfDirty $ flip runReaderT (Config ses errs setupConfDirty pkgDBDirty) $ flip evalStateT def $ unGhcServerM $ flip E.finally stopWatching $ do
-    GHC.initGhcMonad $ Just GHC.Paths.libdir
-    dflags <- GHC.getSessionDynFlags >>= GHC.setSessionDynFlags >> GHC.getSessionDynFlags -- Init the session
-    mapM_ watchPackageDB [GlobalDB, UserDB]
-    GHC.defaultCleanupHandler dflags s
+  withINotify $ \ino -> do
+    res <- flip runReaderT (Config ses errs setupConfDirty pkgDBDirty ino) $ flip evalStateT def $ unGhcServerM $ flip E.finally stopWatching $ do
+      GHC.initGhcMonad $ Just GHC.Paths.libdir
+      dflags <- GHC.getSessionDynFlags >>= GHC.setSessionDynFlags >> GHC.getSessionDynFlags -- Init the session
+      mapM_ watchPackageDB [GlobalDB, UserDB]
+      watchCabal setupConfDirty
+      GHC.defaultCleanupHandler dflags s
  
-  res <$ putStrLn "Exiting runServer"
+    res <$ putStrLn "Exiting runServer"
 
 -- | Resolve a relative file name, producing an absolute file name.
 resolveFile :: FilePath -> Handler FilePath
@@ -190,19 +193,11 @@ watchPackageDB db = do
     Just path' -> do
       mans <- withEnv $ use packageDBWatchers
       packageDBChanged <- viewConfig packageDBDirty
+      ino <- viewConfig inotify
 
       unless (M.member db mans) $ do
-        man <- liftIO startManager
-        withEnv $ packageDBWatchers . at db ?= man
-        dir <- liftIO $ doesDirectoryExist path'
-
-        let path''
-              | dir = path'
-              | otherwise = takeDirectory path'
-            predicate ev
-              | dir = True
-              | otherwise = P.decodeString path' == eventPath ev
-        void $ liftIO $ watchDir man (P.decodeString path'') predicate $ const $ void $ tryPutMVar packageDBChanged ()
+        man <- liftIO $ addWatch ino [Modify, Move, MoveIn, MoveOut, MoveSelf, Delete, Create, DeleteSelf] path' $ const $ void $ tryPutMVar packageDBChanged ()
+        withEnv $ packageDBWatchers.at db ?= man
 
 -- | Stop watching a package db. After calling this function, the packageDBDirty IORef won't be 
 -- set anymore when the DB is changed.
@@ -212,7 +207,7 @@ unwatchPackageDB db = do
   case man of
     Nothing -> return ()
     Just m -> do
-      liftIO $ stopManager m
+      liftIO $ removeWatch m
       withEnv $ packageDBWatchers . at db .= Nothing
 
 -- | Only watch the given package databases. Package databases that are not yet watched are added to the watch list,
@@ -226,11 +221,17 @@ onlyWatchPackageDBs dbs = do
   mapM_ watchPackageDB   $ S.toList $ dbsSet `S.difference` watchedDbs
 
 -- | Watch setup-config, and if dist directory doesn't exist yet, also watch for that directory.
-withWatchCabal :: MVar () -> IO a -> IO a
-withWatchCabal changed action = do
-  wd <- fmap P.decodeString getCurrentDirectory
-  withManager $ \distMan -> do
-    void $ watchTree distMan wd (distPredicate wd) $ const $ void $ tryPutMVar changed ()
-    action
-  where distPredicate wd e = (wd P.</> "dist/setup-config") == eventPath e
-  
+watchCabal :: MVar () -> Server ()
+watchCabal changed = do
+  ino <- viewConfig inotify
+  liftIO $ void $ addWatch ino [Create] "." $ \ev -> case ev of
+    (Created True "dist") -> watchDist ino      
+    _ -> return ()
+  liftIO $ om when (doesDirectoryExist "dist") $ watchDist ino
+
+  where watchDist ino = do
+          void $ addWatch ino [Create] "dist" $ \ev -> case ev of
+            (Created False "setup-config") -> watchSetupConfig ino
+            _ -> return ()
+          om when (doesFileExist "dist/setup-config") $ watchSetupConfig ino
+        watchSetupConfig ino = void $ addWatch ino [Modify, DeleteSelf, MoveSelf] "dist/setup-config" $ const $ void $ tryPutMVar changed ()

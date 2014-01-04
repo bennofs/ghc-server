@@ -68,7 +68,7 @@ executable ghc-server
     , bifunctors
     , dlist
     , dynamic-cabal >= 0.3
-    , fsnotify
+    , hinotify
     , system-filepath
 
 test-suite ghc-server-tests 
