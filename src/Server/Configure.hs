@@ -12,6 +12,7 @@ module Server.Configure
   ) where
 
 import           Control.Applicative
+import           Control.Concurrent.MVar
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -81,7 +82,8 @@ onlyPackageDBs dbs = do
 loadCabal :: Producer Message Server ()
 loadCabal = do
   status "loadCabal" 1 "(Re)loading cabal project settings"
-  lift $ writeVar setupConfigDirty False
+  void $ lift $ viewConfig setupConfigDirty >>= liftIO . tryTakeMVar
+
   (pkgDBs, tgts) <- liftIO $ runQuery ((,) <$> packageDBs <*> on localPkgDesc targets) "dist/setup-config"
   tgts' <- liftIO $ mapM TM.canonicalizeTarget tgts
   lift $ withEnv $ cabalTargets %= TM.union (TM.fromTargets tgts')
@@ -135,7 +137,7 @@ reloadPkgDBs = do
   status "reloadPkgDBs" 1 "Reloading package databases ..."
   lift $ do
     dflags <- GHC.getSessionDynFlags
-    writeVar packageDBDirty False
+    void $ viewConfig packageDBDirty >>= liftIO . tryTakeMVar
     void $ GHC.setSessionDynFlags $ dflags
       { GHC.pkgDatabase = Nothing
       }
@@ -150,7 +152,7 @@ resetFlags = do
     GHC.initGhcMonad $ Just GHC.Paths.libdir
     withEnv $ cabalTargets .= TM.empty
     withEnv $ compilerFlags .= []
-    writeVar setupConfigDirty True
+    viewConfig setupConfigDirty >>= void . liftIO . flip tryPutMVar ()
     runHandler initFlags
 
 -- Now the ugly stuff, for compat with GHC 7.4

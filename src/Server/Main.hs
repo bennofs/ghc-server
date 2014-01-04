@@ -37,13 +37,13 @@ handleRequest (Command pwd c) = withErrors $ do
   status "handleRequest" 1 "Processing command ..."
   lift $ withEnv $ workingDirectory .= pwd
 
-  rld <- lift $ readVar packageDBDirty
-  when rld reloadPkgDBs
+  rld <- lift $ viewConfig packageDBDirty >>= liftIO . tryTakeMVar
+  when (has _Just rld) reloadPkgDBs
 
-  cab <- lift $ readVar setupConfigDirty
+  cab <- lift $ viewConfig setupConfigDirty >>= liftIO . tryTakeMVar
   cabEnabled <- lift $ withEnv $ use cabalEnabled
   setupConfExists <- liftIO $ doesFileExist "dist/setup-config"
-  when (cab && cabEnabled && setupConfExists) loadCabal
+  when (has _Just cab && cabEnabled && setupConfExists) loadCabal
 
   fmap Right $ hoist runHandler $ handleCommand c
 

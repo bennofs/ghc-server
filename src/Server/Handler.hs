@@ -13,7 +13,6 @@ module Server.Handler
   , Env(), compilerFlags, workingDirectory, cabalTargets, cabalEnabled
   , Config(), errors, setupConfigDirty, packageDBDirty
   , resolveFile, watchPackageDB, unwatchPackageDB, onlyWatchPackageDBs
-  , writeVar, readVar
   ) where
 
 import qualified Config
@@ -78,8 +77,8 @@ instance Default Env where def = Env [] def M.empty TM.empty True
 data Config = Config
   { _ghcSession        :: !(IORef HscTypes.HscEnv)
   , _errors            :: !(MVar (DL.DList GHCError))
-  , _setupConfigDirty  :: !(IORef Bool)        
-  , _packageDBDirty    :: !(IORef Bool)  
+  , _setupConfigDirty  :: !(MVar ())
+  , _packageDBDirty    :: !(MVar ())  
   }
 makeLenses ''Config
 
@@ -118,8 +117,8 @@ instance GhcMonad.GhcMonad (GhcServerM t) => DynFlags.HasDynFlags (GhcServerM t)
 #endif
 
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t), MonadIO (ServerCoreM t)) => GhcMonad.GhcMonad (GhcServerM t) where
-  getSession = readVar ghcSession
-  setSession = writeVar ghcSession
+  getSession = viewConfig ghcSession >>= liftIO . readIORef
+  setSession s = viewConfig ghcSession >>= liftIO . flip writeIORef s
                                               
 -- | Execute an action on the current environment in the GhcServerM monad.
 withEnv :: MFunctor (t Env) => t Env Identity a -> GhcServerM t a
@@ -129,17 +128,10 @@ withEnv = GhcServerM . hoist (return . runIdentity)
 viewConfig :: MonadTrans (t Env) => Getting a Config a -> GhcServerM t a
 viewConfig = GhcServerM . lift . view
 
--- | Read an IORef contained in the config.
-readVar :: (Monad (ServerCoreM t), MonadTrans (t Env)) => Getting (IORef a) Config (IORef a) -> GhcServerM t a
-readVar = viewConfig >=> liftIO . readIORef
-
--- | Write an IORef contained in the config.
-writeVar :: (Monad (ServerCoreM t), MonadTrans (t Env)) => Getting (IORef a) Config (IORef a) -> a -> GhcServerM t ()
-writeVar l v = viewConfig l >>= liftIO . flip writeIORef v
-
 -- | The Handler monad is used for the functions that implement commands (like compile / info / ...). It has no mutable state,
 -- the environment is frozen. It also keeps a reference to the global server configuration.
 type Handler = GhcServerM ReaderT
+
 -- | The Server monad is used by the server itself. The environment is mutable, whereas the server configuration is not.
 type Server = GhcServerM StateT
 
@@ -155,8 +147,8 @@ runServer :: Server a -- ^ The action to run
 runServer s = do
   errs <- newEmptyMVar
   ses <- newIORef (Panic.panic "empty session")
-  setupConfDirty <- newIORef True
-  pkgDBDirty   <- newIORef False
+  setupConfDirty <- newMVar ()
+  pkgDBDirty     <- newEmptyMVar
 
   let stopWatching = do
         managers <- withEnv $ uses packageDBWatchers M.elems
@@ -210,7 +202,7 @@ watchPackageDB db = do
             predicate ev
               | dir = True
               | otherwise = P.decodeString path' == eventPath ev
-        void $ liftIO $ watchDir man (P.decodeString path'') predicate $ const $ writeIORef packageDBChanged True
+        void $ liftIO $ watchDir man (P.decodeString path'') predicate $ const $ void $ tryPutMVar packageDBChanged ()
 
 -- | Stop watching a package db. After calling this function, the packageDBDirty IORef won't be 
 -- set anymore when the DB is changed.
@@ -234,11 +226,11 @@ onlyWatchPackageDBs dbs = do
   mapM_ watchPackageDB   $ S.toList $ dbsSet `S.difference` watchedDbs
 
 -- | Watch setup-config, and if dist directory doesn't exist yet, also watch for that directory.
-withWatchCabal :: IORef Bool -> IO a -> IO a
+withWatchCabal :: MVar () -> IO a -> IO a
 withWatchCabal changed action = do
   wd <- fmap P.decodeString getCurrentDirectory
   withManager $ \distMan -> do
-    void $ watchTree distMan wd (distPredicate wd) $ const $ writeIORef changed True
+    void $ watchTree distMan wd (distPredicate wd) $ const $ void $ tryPutMVar changed ()
     action
   where distPredicate wd e = (wd P.</> "dist/setup-config") == eventPath e
   
