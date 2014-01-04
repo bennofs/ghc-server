@@ -5,6 +5,8 @@ module Daemon
   , sendCommand
   , withUnixS
   , forkUnixS
+  , closeUnixSocket
+  , bindUnixSocket
   , Server
   ) where
 
@@ -80,11 +82,12 @@ withUnixS p f c =
       then Just <$> c s
       else return Nothing
 
--- | @forkUnixS f s p@ runs the server s in a new daemon process. It listens on the unix socket
--- at the path @p@. @f@ is the path to the log file.
--- When this function returns, connections are accepted on the given unix socket.
-forkUnixS :: (FromJSON i, ToJSON r, ToJSON m) => FilePath -> Server i (Either r m) -> FilePath -> IO ()
-forkUnixS f s p = do 
+-- | Connect to the socket at the given path. This function will throw an exception
+-- when the path already exists and is not a socket. If the path is a socket and exists,
+-- it will be deleted.
+-- This will return Nothing when binding the socket fails.
+bindUnixSocket :: FilePath -> IO (Maybe Socket)
+bindUnixSocket p = do
   -- Remove the file if it already exists, but only if it is a socket.
   -- The rationale behind this is that if the file is a socket, it was probably
   -- created by our program, so it's safe to delete it.
@@ -93,17 +96,29 @@ forkUnixS f s p = do
     unless sock $ ioError $ mkIOError alreadyExistsErrorType "ghc-server:forkUnixS" Nothing (Just p)
     removeFile p
 
-  -- Create the socket. If we created the socket only in the forked server process, then it wouldn't
-  -- be ready to accept connections right after the return of this function. That's the reason why
-  -- the socket is already bound here.
   sock <- socket AF_UNIX Stream 0
   ei <- E.try $ bind sock $ SockAddrUnix p
   case ei of
-    Left (_ :: E.IOException) -> hPutStrLn stderr "ghc-server:forkUnixS: Ignored IO exception when trying to bind socket"
-    Right () -> do
+    Left (_ :: E.IOException) -> return Nothing
+    Right () -> do 
       listen sock maxListenQueue
-      -- Daemonize
-      void $ forkProcess $ child1 sock
+      return $ Just sock
+
+-- | @forkUnixS f s p@ runs the server s in a new daemon process. It listens on the unix socket
+-- at the path @p@. @f@ is the path to the log file.
+-- When this function returns, connections are accepted on the given unix socket.
+forkUnixS :: (FromJSON i, ToJSON r, ToJSON m) => FilePath -> Server i (Either r m) -> FilePath -> IO ()
+forkUnixS f s p = do 
+
+  -- Create the socket. If we created the socket only in the forked server process, then it wouldn't
+  -- be ready to accept connections right after the return of this function. That's the reason why
+  -- the socket is already bound here.
+  sock <- bindUnixSocket p
+
+  -- Daemonize
+  case sock of
+    Nothing -> hPutStrLn stderr "ghc-server:forkUnixS: Ignored IO exception when trying to bind socket. Not starting server."
+    Just sock' -> void $ forkProcess $ child1 sock'
 
   where child1 sock = do
           void createSession
@@ -128,7 +143,7 @@ forkUnixS f s p = do
 
           -- Close the socket if we get killed
           forM_ [sigHUP, sigINT, sigTERM, sigPIPE] $ \x -> 
-            installHandler x (Catch $ putStrLn "Caught signal. Exiting." >> closeUnixSocket p sock >> exitImmediately ExitSuccess) Nothing
+            installHandler x (Catch $ putStrLn "Caught signal. Exiting." >> closeUnixSocket p sock >> exitSuccess) Nothing
           putStrLn "Signal handlers set."
 
           -- Now start the server process
@@ -140,7 +155,7 @@ forkUnixS f s p = do
             Left e
               | Just (GHC.Signal _) <- E.fromException e -> putStrLn "Exiting because of signal" >> exitSuccess -- GHC API changes signal handlers, WTF ?!
               | otherwise                               -> putStrLn "Exception:" >> print e     >> exitFailure 
-            Right () -> putStrLn "Exit success." >> exitImmediately ExitSuccess
+            Right () -> putStrLn "Exit success." >> exitSuccess
  
 -- | Send a command to the server. The second argument is the consumer which processes the responses of the server. The socket
 -- must be connected to the server.

@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 import           Control.Concurrent (threadDelay)
+import qualified Control.Exception as E
 import           Control.Lens hiding (argument)
 import           Control.Monad
 import           Control.Monad.Loops
@@ -89,16 +90,23 @@ customConfig f = ConfigO $ \opts -> execState (f opts) (review configO def opts)
 adminCmd :: ParserInfo ConfigO
 adminCmd = info (helper <*> cmd) $ fullDesc <> progDesc "command the server"
   where cmd = subparser $ mconcat
-           [ commandConfig  "start"  startConfig     $ briefDesc <> progDesc "start the server"
+           [ commandConfigM "start"  startParser     $ briefDesc <> progDesc "start the server"
            , commandConfig  "stop"   shutdownConfig  $ briefDesc <> progDesc "stop the server"
            , commandConfig  "reset"  resetConfig     $ briefDesc <> progDesc "reset the GHC options used by the server and reload the cabal file"
            , commandConfig  "status" statusConfig    $ briefDesc <> progDesc "check whether the server is running or not"
            , commandConfigM "ghc"    ghcParser       $ fullDesc  <> progDesc "add GHC options for compiling"                          
            ]
+
+        startParser = startConfig <$> switch (short 'd' <> long "no-daemon" <> help "Do not daemonize")
            
-        startConfig = customConfig $ \opts -> do
-          onSuccess .= logClient opts 0 "Server started."
-          onFailure .= logClient opts 0 "Failed to start server."
+        startConfig nd = customConfig $ \opts -> do
+          when nd $ serverStarter .= \s p ->
+            E.bracket (bindUnixSocket p) (maybe (return ()) $ closeUnixSocket p) $ \sock -> case sock of
+              Nothing    -> logClient opts 0 "Race condition detected. Not starting server."
+              Just sock' -> startServer s sock'
+
+          onSuccess     .= logClient opts 0 "Server is running now."
+          onFailure     .= logClient opts 0 "Failed to start server."
 
         shutdownConfig = customConfig $ \opts -> do
           serverStarter .= \_ _ -> logClient opts 0 "Server is not running." >> exitSuccess
