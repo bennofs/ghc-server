@@ -224,14 +224,18 @@ onlyWatchPackageDBs dbs = do
 watchCabal :: MVar () -> Server ()
 watchCabal changed = do
   ino <- viewConfig inotify
-  liftIO $ void $ addWatch ino [Create] "." $ \ev -> case ev of
-    (Created True "dist") -> watchDist ino      
+  liftIO $ void $ addWatch ino [Create, MoveIn, Move] "." $ \ev -> case ev of
+    (Created True "dist") -> watchDist ino
+    (MovedIn True "dist" _) -> watchDist ino
     _ -> return ()
   liftIO $ om when (doesDirectoryExist "dist") $ watchDist ino
 
   where watchDist ino = do
-          void $ addWatch ino [Create] "dist" $ \ev -> case ev of
-            (Created False "setup-config") -> watchSetupConfig ino
-            _ -> return ()
-          om when (doesFileExist "dist/setup-config") $ watchSetupConfig ino
-        watchSetupConfig ino = void $ addWatch ino [Modify, DeleteSelf, MoveSelf] "dist/setup-config" $ const $ void $ tryPutMVar changed ()
+          putStrLn "Watching newly created dist directory"
+          void $ addWatch ino [Create, MoveIn, Modify, Delete] "dist" $ \ev -> case ev of
+            (Created False "setup-config") -> void $ tryPutMVar changed ()
+            (MovedIn False "setup-config" _) -> void $ tryPutMVar changed ()
+            (Modified False (Just "setup-config")) -> void $ tryPutMVar changed ()
+            (Deleted False "setup-config") -> void $ tryPutMVar changed ()
+            x -> print x
+          om when (doesFileExist "dist/setup-config") $ void $ tryPutMVar changed ()
