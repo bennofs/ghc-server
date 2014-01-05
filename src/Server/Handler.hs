@@ -32,6 +32,7 @@ import qualified Data.DList as DL
 import           Data.Default
 import           Data.IORef
 import qualified Data.Map as M
+import           Data.Maybe
 import qualified Data.Set as S
 import           Distribution.Client.Dynamic hiding (packageDBs)
 import qualified DynFlags
@@ -59,8 +60,8 @@ data Env = Env
     -- | We save the working directory of the client so we can resolve the paths sent from the client and also give good error messages.
   , _workingDirectory :: !FilePath    
 
-    -- | The watch managers for the package databases. 
-  , _packageDBWatchers :: !(M.Map PackageDB WatchDescriptor)
+    -- | IO actions that disable watching the given package database.
+  , _packageDBWatchers :: !(M.Map PackageDB (IO ()))
 
     -- | The targets from the cabal file, if we loaded it.
   , _cabalTargets :: TM.TargetMap
@@ -152,8 +153,8 @@ runServer s = do
   pkgDBDirty     <- newEmptyMVar
 
   let stopWatching = do
-        managers <- withEnv $ uses packageDBWatchers M.elems
-        liftIO $ mapM_ removeWatch managers >> putStrLn "Shutdown of Server monad finished."
+        finalizers <- withEnv $ uses packageDBWatchers M.elems
+        liftIO $ sequence_ finalizers >> putStrLn "Shutdown of Server monad finished."
   
   putStrLn $ "Using libdir: " ++ GHC.Paths.libdir
   withINotify $ \ino -> do
@@ -183,6 +184,44 @@ packageDBPath UserDB = MonadUtils.liftIO $ do
   dirExists <- doesDirectoryExist pkgconf
   return $ if dirExists then Just pkgconf else Nothing
 
+-- | Perform an action only when the given path exists. The action returns
+-- another action that will be performed when the path is deleted again.
+onExists :: INotify -> Maybe Bool -> FilePath -> IO (IO ()) -> IO (IO ())
+onExists ino isDir path action = do
+  wd <- getCurrentDirectory
+  let components = flip resolveRelative [] $ map dropTrailingPathSeparator $ splitPath $ if isAbsolute path then path else wd </> path
+      resolveRelative ("..":ps) (_:rs) = resolveRelative ps rs
+      resolveRelative ("..":ps) []     = resolveRelative ps []
+      resolveRelative ("." :ps) rs     = resolveRelative ps rs
+      resolveRelative (p   :ps) rs     = resolveRelative ps (p:rs)
+      resolveRelative []        rs     = rs
+  let (name:parents) = components
+      parent = joinPath $ reverse parents
+
+  if null parents
+    then action
+    else onExists ino (Just True) parent $ do
+      finalizerVar <- newEmptyMVar
+      let finalize = tryTakeMVar finalizerVar >>= fromMaybe (return ())
+          action'  = action >>= putMVar finalizerVar
+      watcher <- addWatch ino [Move, Delete, Create] parent $ \ev -> case ev of
+        (MovedIn d n _)  | maybe True (d ==) isDir && n == name -> finalize >> action'
+        (Deleted d n)    | maybe True (d ==) isDir && n == name -> finalize
+        (MovedOut d n _) | maybe True (d ==) isDir && n == name -> finalize
+        (Created d n)    | maybe True (d ==) isDir && n == name -> finalize >> action'
+        _                                       -> return ()
+      when (fromMaybe True isDir) $ om when (doesDirectoryExist path) action'
+      unless (fromMaybe False isDir) $ om when (doesFileExist path) action'
+      return (removeWatch watcher >> finalize)
+
+-- | Watch a path for changes. This will also watch all parents when the path
+-- doesn't exist yet. When the filesystem object at the given path changes, the
+-- given IO action will be executed.
+watchPathChanges :: INotify -> Maybe Bool -> FilePath -> IO () -> IO (IO ())
+watchPathChanges ino isDir path action = onExists ino isDir path $ do
+  watcher <- addWatch ino [Modify, Move, Delete, Create] path $ const action
+  (action >> removeWatch watcher) <$ action
+
 -- | Watch a package db. This will register a handler, so that the packageDBDirty IORef is set
 -- when the package db changed.
 watchPackageDB :: PackageDB -> Server ()
@@ -195,20 +234,20 @@ watchPackageDB db = do
       packageDBChanged <- viewConfig packageDBDirty
       ino <- viewConfig inotify
 
-      unless (M.member db mans) $ do
-        man <- liftIO $ addWatch ino [Modify, Move, MoveIn, MoveOut, MoveSelf, Delete, Create, DeleteSelf] path' $ const $ void $ tryPutMVar packageDBChanged ()
+      unless (M.member db mans) $ do 
+        man <- liftIO $ watchPathChanges ino Nothing path' $ void $ tryPutMVar packageDBChanged ()
         withEnv $ packageDBWatchers.at db ?= man
 
 -- | Stop watching a package db. After calling this function, the packageDBDirty IORef won't be 
 -- set anymore when the DB is changed.
 unwatchPackageDB :: PackageDB -> Server ()
 unwatchPackageDB db = do
-  man <- withEnv $ use $ packageDBWatchers . at db
-  case man of
+  finalize <- withEnv $ use $ packageDBWatchers.at db
+  case finalize of
     Nothing -> return ()
-    Just m -> do
-      liftIO $ removeWatch m
-      withEnv $ packageDBWatchers . at db .= Nothing
+    Just action -> do
+      liftIO action
+      withEnv $ packageDBWatchers.at db .= Nothing
 
 -- | Only watch the given package databases. Package databases that are not yet watched are added to the watch list,
 -- packages that are watched but are not in the argument list will be removed from the watch list.
@@ -224,18 +263,4 @@ onlyWatchPackageDBs dbs = do
 watchCabal :: MVar () -> Server ()
 watchCabal changed = do
   ino <- viewConfig inotify
-  liftIO $ void $ addWatch ino [Create, MoveIn, Move] "." $ \ev -> case ev of
-    (Created True "dist") -> watchDist ino
-    (MovedIn True "dist" _) -> watchDist ino
-    _ -> return ()
-  liftIO $ om when (doesDirectoryExist "dist") $ watchDist ino
-
-  where watchDist ino = do
-          putStrLn "Watching newly created dist directory"
-          void $ addWatch ino [Create, MoveIn, Modify, Delete] "dist" $ \ev -> case ev of
-            (Created False "setup-config") -> void $ tryPutMVar changed ()
-            (MovedIn False "setup-config" _) -> void $ tryPutMVar changed ()
-            (Modified False (Just "setup-config")) -> void $ tryPutMVar changed ()
-            (Deleted False "setup-config") -> void $ tryPutMVar changed ()
-            x -> print x
-          om when (doesFileExist "dist/setup-config") $ void $ tryPutMVar changed ()
+  liftIO $ void $ watchPathChanges ino (Just False) "dist/setup-config" $ void $ tryPutMVar changed ()
