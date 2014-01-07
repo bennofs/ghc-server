@@ -76,9 +76,9 @@ startServer f s = do
     lift $ putStrLn "Processing control messages ..."
     whileJust_ (liftIO $ fmap join $ atomically $ fmap Just (recv ctlIn) <|> return Nothing) $ \(SetTimeout t) -> assign acceptTimeout t
 
-    t <- use $ acceptTimeout . to (fmap (* 1000000))
-    lift $ putStrLn $ "Waiting for clients " ++ maybe "" (\t' -> "(Waiting at most " ++ show t' ++ " seconds") t ++ " ..."
-    mbClient <- lift $ maybe (fmap Just) timeout t $ fmap fst $ accept s
+    t <- use acceptTimeout
+    lift $ putStrLn $ "Waiting for clients " ++ maybe "" (\t' -> "(Waiting at most " ++ show t' ++ " seconds)") t ++ " ..."
+    mbClient <- lift $ maybe (fmap Just) (timeout . (* 1000000)) t $ fmap fst $ accept s
     lift $ case mbClient of
       Nothing -> throwTo main Timeout
       Just c -> flip E.finally (close c >> putStrLn "Closed client connection.") $ do
