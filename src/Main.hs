@@ -47,7 +47,7 @@ sharedOptions = SharedOptions
   <*> optional (strOption (short 'f' <> long "log" <> help "logfile" <> metavar "FILE"))
   <*> switch (short 'c' <> long "no-cabal" <> help "Do not use cabal to figure out the project settings")
   <*> option (short 's' <> long "socket"   <> help "The path to the socket file to use. Relative paths are relative to the project root if cabal support is enabled." <> value ".ghc-server.sock")
-  <*> optional (option (short 't' <> long "timout"   <> help "Number of seconds of idle time after which the server will exit. If set to 0, the server will never exit by itself." <> value 0))
+  <*> optional (option (short 't' <> long "timout"   <> help "Number of seconds of idle time after which the server will exit. If set to 0, the server will never exit by itself."))
 
 -- | Configure options for the client's pipeline.
 data Config = Config
@@ -173,8 +173,8 @@ main = do
   let req = review configO req' options
       req'' | not $ options^.disableCabal = req^.request
             | otherwise = Multiple [EnvChange DisableCabal, req^.request]
-      addTimeoutOpt (Just t) | t == 0 = Multiple [req'', EnvChange $ SuicideTimeout Nothing]
-                             | otherwise = Multiple [req'', EnvChange $ SuicideTimeout $ Just t]
+      addTimeoutOpt (Just t) | t == 0 = Multiple [EnvChange $ SuicideTimeout Nothing, req'']
+                             | otherwise = Multiple [EnvChange $ SuicideTimeout $ Just t, req'']
       addTimeoutOpt _ = req''
       req''' = addTimeoutOpt (options^.serverTimeout) 
 
