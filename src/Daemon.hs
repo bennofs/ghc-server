@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE PatternGuards #-}
 module Daemon
   ( startServer
@@ -8,17 +10,24 @@ module Daemon
   , closeUnixSocket
   , bindUnixSocket
   , Server
+  , ControlMessage(..)
   ) where
 
 import           Control.Applicative
+import           Control.Concurrent hiding (yield)
 import           Control.Concurrent.Async
 import qualified Control.Exception as E
+import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Extra hiding (bind)
+import           Control.Monad.Loops
+import           Control.Monad.Trans.State
 import           Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import           Data.Default
 import           Data.Monoid
+import           Data.Typeable
 import qualified GHC
 import           Message
 import           Network.Socket hiding (send, recv)
@@ -32,10 +41,27 @@ import           System.Exit
 import           System.IO
 import           System.IO.Error
 import           System.Posix
+import           System.Timeout
 
--- | A server is just a function that takes a producer of requests and writes it's responses to a
--- given producer.
-type Server i o = Producer i IO () -> Consumer o IO () -> IO ()
+-- | A message to be sent to the thread processing the incoming connections.
+data ControlMessage = SetTimeout (Maybe Int) -- ^ Set the timeout after which to exit starting with the next 'accept' call
+
+-- | The state for the request handler
+data ServerThread = ServerThread 
+  { _acceptTimeout :: Maybe Int 
+  }
+makeLenses ''ServerThread
+
+instance Default ServerThread where
+  def = ServerThread Nothing
+
+data Timeout = Timeout deriving (Typeable, Show)
+instance E.Exception Timeout
+
+-- | A server is a function that takes a producer of requests and writes it's responses to a
+-- given consumer. It can also send control messages to the server runner using another 
+-- consumer.
+type Server i o = Producer i IO () -> Consumer o IO () -> Consumer ControlMessage IO () -> IO ()
 
 -- | @startServer f s@ listens on the given Socket and starts the server. The socket must be
 -- bound to an address and in listening state.
@@ -43,19 +69,28 @@ startServer :: (FromJSON a, ToJSON r, ToJSON m) => Server a (Either r m) -> Sock
 startServer f s = do
   (reqOut,reqIn) <- spawn Unbounded
   (resOut,resIn) <- spawn Unbounded
+  (ctlOut,ctlIn) <- spawn Unbounded
+  main <- myThreadId
 
-  a <- async $ forever $ do
-    putStrLn "Waiting for clients ..."
-    E.bracket (fmap fst $ accept s) (close >=> const (putStrLn "Closed client connection.")) $ \c -> do
-      putStrLn "Accepted client."
-      void $ waitAnyCancel <=< mapM async $ 
-       [ do runEffect $ fromSocket c 4096 >-> sepP 0 >-> P.filter (not . BS.null) >-> jsonP onError >-> toOutput reqOut
-            putStrLn "Connection terminated by the client. "
-       , do runEffect $ fromInput resIn >-> handleEither >-> jsonS >-> sepS 0 >-> toSocket c
-            putStrLn "Connection terminated by the server."                   
-       ]
+  a <- async $ flip evalStateT def $ forever $ do
+    lift $ putStrLn "Processing control messages ..."
+    whileJust_ (liftIO $ fmap join $ atomically $ fmap Just (recv ctlIn) <|> return Nothing) $ \(SetTimeout t) -> assign acceptTimeout t
 
-  f (fromInput reqIn) (toOutput resOut) `E.finally` cancel a
+    t <- use $ acceptTimeout . to (fmap (* 1000000))
+    lift $ putStrLn $ "Waiting for clients " ++ maybe "" (\t' -> "(Waiting at most " ++ show t' ++ " seconds") t ++ " ..."
+    mbClient <- lift $ maybe (fmap Just) timeout t $ fmap fst $ accept s
+    lift $ case mbClient of
+      Nothing -> throwTo main Timeout
+      Just c -> flip E.finally (close c >> putStrLn "Closed client connection.") $ do
+        putStrLn "Accepted client."
+        void $ waitAnyCancel <=< mapM async $ 
+          [ do runEffect $ fromSocket c 4096 >-> sepP 0 >-> P.filter (not . BS.null) >-> jsonP onError >-> toOutput reqOut
+               putStrLn "Connection terminated by the client. "
+          , do runEffect $ fromInput resIn >-> handleEither >-> jsonS >-> sepS 0 >-> toSocket c
+               putStrLn "Connection terminated by the server."                   
+          ]
+
+  E.catch (f (fromInput reqIn) (toOutput resOut) (toOutput ctlOut) `E.finally` cancel a) $ \Timeout -> putStrLn "Exiting because of timeout"
   putStrLn "Performing garbage collection to exit ..."
   performGC
   putStrLn "Server handler exited. Stopping accept thread ..."

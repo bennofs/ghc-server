@@ -1,9 +1,12 @@
 module Util
   ( takeWhileRight
+  , eitherP
   ) where
 
 import Control.Monad
+import Data.Void
 import Pipes
+import Pipes.Core
 
 -- $setup
 -- >>> import Pipes.Prelude (toList) 
@@ -15,3 +18,16 @@ import Pipes
 -- [Right 3,Right 4,Right 5,Left 4]
 takeWhileRight :: Monad m => Pipe (Either r a) a m r
 takeWhileRight = await >>= either return (yield >=> const takeWhileRight)
+
+
+-- | @eitherP f g@ is a consumer that runs p when it encounters a Left, and g if it encounters a Right.
+--
+-- >>> toList $ each [Right "hello", Left 3, Left 5, Right "bye", Left 6] >-> eitherP (\a -> yield a >-> P.map show) (\b -> yield b >-> P.map (show . length))
+-- ["5","3","5","3","6"]
+eitherP :: Monad m => (a -> Server x' x m ()) -> (b -> Server x' x m ()) -> Proxy () (Either a b) x' x m r
+eitherP f g = do
+  e <- await
+  case e of
+    Left a -> absurd >\\ f a
+    Right b -> absurd >\\ g b
+  eitherP f g

@@ -70,6 +70,7 @@ executable ghc-server
     , dynamic-cabal >= 0.3
     , hinotify
     , system-filepath
+    , void
 
 test-suite ghc-server-tests 
   main-is:        Main.hs

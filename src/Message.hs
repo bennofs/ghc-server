@@ -69,6 +69,7 @@ deriveJSON defaultOptions ''Command
 data EnvChange = AddGhcArgs [String]
                | ResetGhcArgs
                | DisableCabal
+               | SuicideTimeout (Maybe Int)
   deriving Show
 deriveJSON defaultOptions ''EnvChange
 

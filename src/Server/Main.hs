@@ -7,10 +7,14 @@ import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Lens
 import           Control.Monad
+import           Daemon (ControlMessage(..))
 import qualified Data.DList as DL
 import qualified Data.Text as T
+import           Data.Void
 import           Message
 import           Pipes
+import           Pipes.Core ((//>))
+import qualified Pipes.Prelude as P
 import           Server.Compile
 import           Server.Configure
 import           Server.Errors
@@ -21,19 +25,24 @@ import           Util
 
 -- | Start the request-response loop. Requests are read from the input producer and responses are written to the output
 -- consumer. The process is consumer-driven, the consumer should start to request responses. 
-serve :: Producer Request IO () -> Consumer Response IO () -> IO ()
-serve inp outp = runServer $ do
+serve :: Producer Request IO () -> Consumer Response IO () -> Consumer ControlMessage IO () -> IO ()
+serve inp outp ctrl = runServer $ do
     runHandler initFlags
-    runEffect $ for (hoist liftIO inp) (handleRequest ~> yield . Right . msg >=> yield . bimap finish finish) >-> (takeWhileRight >>= yield) >-> hoist liftIO outp
+    runEffect $ for (hoist liftIO inp) (\req -> 
+                      handleRequest req 
+                  >-> eitherP (\x -> yield x >-> (hoist liftIO ctrl //> absurd)) (yield . Right . msg)
+                  >>= yield . bimap finish finish)
+            >-> (takeWhileRight >>= yield) 
+            >-> hoist liftIO outp
   
 -- | Handle a single request.
-handleRequest :: Request -> Producer Message Server (Either Result Result)
+handleRequest :: Request -> Producer (Either ControlMessage Message) Server (Either Result Result)
 handleRequest Shutdown  = return $ Left Success
 handleRequest (Multiple rs)
   | null rs = return $ Right Success
   | otherwise = fmap last . sequence <$> mapM handleRequest rs
-handleRequest (EnvChange e) = withErrors $ Right <$> handleEnvChange e
-handleRequest (Command pwd c) = withErrors $ do
+handleRequest (EnvChange e) = Right <$> handleEnvChange e
+handleRequest (Command pwd c) = (>-> P.map Right) $ withErrors $ do
   status "handleRequest" 1 "Processing command ..."
   lift $ withEnv $ workingDirectory .= pwd
 
@@ -48,8 +57,8 @@ handleRequest (Command pwd c) = withErrors $ do
   fmap Right $ hoist runHandler $ handleCommand c
 
 -- | Handle an EnvChange request.
-handleEnvChange :: EnvChange -> Producer Message Server Result
-handleEnvChange (AddGhcArgs a) = do
+handleEnvChange :: EnvChange -> Producer (Either ControlMessage Message) Server Result
+handleEnvChange (AddGhcArgs a) = (>-> P.map Right) $ withErrors $ do
   status "handleEnvChange" 1 $ T.pack $ "Adding flags: " ++ unwords a
   lift $ withEnv $ compilerFlags <>= a
   status "handleEnvChange" 2 "Updating GHC flags ..."
@@ -57,8 +66,9 @@ handleEnvChange (AddGhcArgs a) = do
   case r of
     Just err -> Failure 1 <$ yield (CompilerException $ T.pack err)
     _ -> return Success
-handleEnvChange ResetGhcArgs = Success <$ resetFlags
-handleEnvChange DisableCabal = Success <$ lift (withEnv $ cabalEnabled .= False)
+handleEnvChange (SuicideTimeout t) = Success <$ yield (Left $ SetTimeout t)
+handleEnvChange ResetGhcArgs = (>-> P.map Right) $ withErrors $ Success <$ resetFlags
+handleEnvChange DisableCabal = (>-> P.map Right) $ withErrors $ Success <$ lift (withEnv $ cabalEnabled .= False)
 
 -- | Send all collected errors.
 sendErrors :: Producer Message Server ()
