@@ -60,8 +60,6 @@ handleRequest (Command pwd c) = (>-> P.map Right) $ withErrors $ do
 handleEnvChange :: EnvChange -> Producer (Either ControlMessage Message) Server Result
 handleEnvChange (AddGhcArgs a) = (>-> P.map Right) $ withErrors $ do
   status "handleEnvChange" 1 $ T.pack $ "Adding flags: " ++ unwords a
-  lift $ withEnv $ compilerFlags <>= a
-  status "handleEnvChange" 2 "Updating GHC flags ..."
   r <- lift $ addFlags a
   case r of
     Just err -> Failure 1 <$ yield (CompilerException $ T.pack err)

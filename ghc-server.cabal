@@ -71,6 +71,7 @@ executable ghc-server
     , hinotify
     , system-filepath
     , void
+    , time
 
 test-suite ghc-server-tests 
   main-is:        Main.hs

@@ -1,15 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
 module Server.Configure 
-  ( addFlags
-  , loadCabal
+  ( loadCabal
   , reloadPkgDBs
-  , resetFlags
   , initFlags
+  , addFlags
+  , resetFlags
   , addPackageDB
   , onlyPackageDBs
-  , loadFileOptions
+  , withFileOptions
   ) where
+
 
 import           Control.Applicative
 import           Control.Concurrent.MVar
@@ -19,12 +20,15 @@ import           Control.Monad.IO.Class
 import           Data.List
 import           Data.Monoid
 import qualified Data.Text as T
+import           Data.Time
 import           Data.Version
 import           Distribution.Client.Dynamic hiding (includeDirs)
 import qualified DynFlags
 import qualified Exception
 import qualified GHC
 import qualified GHC.Paths
+import qualified GhcMonad
+import qualified HscTypes
 import           Message
 import           Pipes
 import           Server.Errors
@@ -83,10 +87,11 @@ loadCabal :: Producer Message Server ()
 loadCabal = do
   status "loadCabal" 1 "(Re)loading cabal project settings"
   void $ lift $ viewConfig setupConfigDirty >>= liftIO . tryTakeMVar
+  resetFlags
 
   (pkgDBs, tgts) <- liftIO $ runQuery ((,) <$> packageDBs <*> on localPkgDesc targets) "dist/setup-config"
   tgts' <- liftIO $ mapM TM.canonicalizeTarget tgts
-  lift $ withEnv $ cabalTargets %= TM.union (TM.fromTargets tgts')
+  lift $ withEnv $ cabalTargets .= TM.fromTargets tgts'
 
   status "loadCabal" 2 $ "Using package databases: " <> T.pack (show pkgDBs)
   lift $ onlyPackageDBs pkgDBs
@@ -101,13 +106,26 @@ loadCabal = do
   dflags <- lift GHC.getSessionDynFlags
   lift $ void $ GHC.setSessionDynFlags $ (DynFlags.dopt_set dflags GHC.Opt_HideAllPackages)
     { DynFlags.packageFlags = map DynFlags.ExposePackage deps 
-    , DynFlags.importPaths = importDirs
- 
+    , DynFlags.importPaths = importDirs 
     }
 
+-- | Like setSessionDynFlags, but does not reload the package database / state.
+setSessionDynFlags' :: (MonadIO m, GHC.GhcMonad m) => GHC.DynFlags -> m ()
+setSessionDynFlags' dflags = do
+  GhcMonad.modifySession (\h -> h
+    { HscTypes.hsc_dflags = dflags
+    , HscTypes.hsc_IC = (HscTypes.hsc_IC h){ HscTypes.ic_dflags = dflags } 
+    })
+  invalidateModSummaryCache
+
+invalidateModSummaryCache :: GHC.GhcMonad m => m ()
+invalidateModSummaryCache = GhcMonad.modifySession $ \h -> h { HscTypes.hsc_mod_graph = map inval (HscTypes.hsc_mod_graph h) }
+ where
+  inval ms = ms { HscTypes.ms_hs_date = addUTCTime (-1) (HscTypes.ms_hs_date ms) }
+
 -- | Loads the cabal options for a given file. The argument should be an absolute file name.
-loadFileOptions :: FilePath -> Producer Message Handler ()
-loadFileOptions path = do
+withFileOptions :: FilePath -> Handler a -> Producer Message Handler a
+withFileOptions path action = do
   status "loadFileOptions" 2 $ "Loading cabal options for file " <> T.pack (show path) <> " ..."
   tgts <- lift $ withEnv $ views cabalTargets $ TM.lookupBest path
 
@@ -123,13 +141,15 @@ loadFileOptions path = do
 
   dflags <- lift GHC.getSessionDynFlags
   (dflags', _, _) <- GHC.parseDynamicFlags dflags $ map GHC.noLoc opts 
-
-  lift $ void $ GHC.setSessionDynFlags $ dflags'
-     { DynFlags.importPaths = DynFlags.importPaths dflags' ++ imps ++ importDirs
-     , DynFlags.settings = (DynFlags.settings dflags)
+  
+  lift $ void $ setSessionDynFlags' $ dflags'
+    { DynFlags.importPaths = DynFlags.importPaths dflags ++ imps ++ importDirs
+    , DynFlags.settings = (DynFlags.settings dflags')
         { DynFlags.sOpt_P = reverse $ concatMap (\x -> ["-include", x]) includeDirs
         }
-     }
+    }
+
+  lift $ action `GHC.gfinally` setSessionDynFlags' dflags
 
 -- | Reload the package database. You should call this function when new packages have been installed.
 reloadPkgDBs :: Producer Message Server ()
@@ -151,7 +171,6 @@ resetFlags = do
   lift $ do
     GHC.initGhcMonad $ Just GHC.Paths.libdir
     withEnv $ cabalTargets .= TM.empty
-    withEnv $ compilerFlags .= []
     viewConfig setupConfigDirty >>= void . liftIO . flip tryPutMVar ()
     runHandler initFlags
 

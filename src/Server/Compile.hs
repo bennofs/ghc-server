@@ -24,14 +24,13 @@ compile file = do
   s 2 "Reset targets"
   void $ lift $ GHC.setTargets [] >> GHC.load GHC.LoadAllTargets
   
-  s 2 "Load current target"
-  file' <- lift $ resolveFile file
-  loadFileOptions file'
-  lift $ GHC.guessTarget file' Nothing >>= GHC.setTargets . (:[])
-  
   s 2 "Compile target"
-  let handler err = GHC.printException err *> return GHC.Failed
-  flagE <- lift $ Exception.gtry $ GHC.handleSourceError handler (GHC.load GHC.LoadAllTargets)
+  file' <- lift $ resolveFile file
+  flagE <- withFileOptions file' $ do
+    GHC.guessTarget file' Nothing >>= GHC.setTargets . (:[])
+    let handler err = GHC.printException err *> return GHC.Failed
+    Exception.gtry $ GHC.handleSourceError handler (GHC.load GHC.LoadAllTargets)
+
   case flagE of
     Left e -> Failure 1 <$ yield (CompilerException $ T.pack $ show (e :: Panic.GhcException))
     Right GHC.Succeeded -> return Success

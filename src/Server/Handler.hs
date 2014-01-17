@@ -10,7 +10,7 @@
 module Server.Handler
   ( Handler, runHandler, withEnv, viewConfig
   , Server, runServer
-  , Env(), compilerFlags, workingDirectory, cabalTargets, cabalEnabled
+  , Env(), workingDirectory, cabalTargets, cabalEnabled
   , Config(), errors, setupConfigDirty, packageDBDirty
   , resolveFile, watchPackageDB, unwatchPackageDB, onlyWatchPackageDBs
   ) where
@@ -53,12 +53,8 @@ import           System.Info
 -- | This type represents the current environment of the server. The environment stays constant in a single request, but it might
 -- change between requests.
 data Env = Env
-  { -- | This stores the flags to pass to GHC. This is not strictly neccessary, as the flags will also be stored in the DynFlags,
-    -- but might be useful for giving better debug messages.
-    _compilerFlags    :: ![String]
-    
-    -- | We save the working directory of the client so we can resolve the paths sent from the client and also give good error messages.
-  , _workingDirectory :: !FilePath    
+  { -- | We save the working directory of the client so we can resolve the paths sent from the client and also give good error messages.
+    _workingDirectory :: !FilePath    
 
     -- | IO actions that disable watching the given package database.
   , _packageDBWatchers :: !(M.Map PackageDB (IO ()))
@@ -71,7 +67,7 @@ data Env = Env
   }
 makeLenses ''Env
 
-instance Default Env where def = Env [] def M.empty TM.empty True
+instance Default Env where def = Env def M.empty TM.empty True
 
 -- | This type represents the configuration of the server. It stays constant for the whole run time of the server, and does not
 -- change between requests. 
