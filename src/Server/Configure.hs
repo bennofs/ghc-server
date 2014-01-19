@@ -114,7 +114,9 @@ setSessionDynFlags' :: (MonadIO m, GHC.GhcMonad m) => GHC.DynFlags -> m ()
 setSessionDynFlags' dflags = do
   GhcMonad.modifySession (\h -> h
     { HscTypes.hsc_dflags = dflags
+#if __GLASGOW_HASKELL__ >= 706
     , HscTypes.hsc_IC = (HscTypes.hsc_IC h){ HscTypes.ic_dflags = dflags } 
+#endif
     })
   invalidateModSummaryCache
 
