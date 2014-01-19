@@ -20,7 +20,11 @@ import           Control.Monad.IO.Class
 import           Data.List
 import           Data.Monoid
 import qualified Data.Text as T
+#if __GLASGOW_HASKELL__ >= 706
 import           Data.Time
+#else
+import           System.Time
+#endif
 import           Data.Version
 import           Distribution.Client.Dynamic hiding (includeDirs)
 import qualified DynFlags
@@ -123,7 +127,11 @@ setSessionDynFlags' dflags = do
 invalidateModSummaryCache :: GHC.GhcMonad m => m ()
 invalidateModSummaryCache = GhcMonad.modifySession $ \h -> h { HscTypes.hsc_mod_graph = map inval (HscTypes.hsc_mod_graph h) }
  where
+#if __GLASGOW_HASKELL__ >= 706
   inval ms = ms { HscTypes.ms_hs_date = addUTCTime (-1) (HscTypes.ms_hs_date ms) }
+#else
+  inval ms = ms { HscTypes.ms_hs_date = addToClockTime (TimeDiff 0 0 0 0 0 0 (-1)) (HscTypes.ms_hs_date ms) }
+#endif
 
 -- | Loads the cabal options for a given file. The argument should be an absolute file name.
 withFileOptions :: FilePath -> Handler a -> Producer Message Handler a

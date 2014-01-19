@@ -71,7 +71,12 @@ executable ghc-server
     , hinotify
     , system-filepath
     , void
-    , time
+
+  if impl(ghc >= 7.6)
+    build-depends: time
+
+  if impl(ghc < 7.6)
+    build-depends: old-time
 
 test-suite ghc-server-tests 
   main-is:        Main.hs
