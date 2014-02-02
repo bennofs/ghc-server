@@ -90,8 +90,8 @@ onlyPackageDBs dbs = do
 loadCabal :: Producer Message Server ()
 loadCabal = do
   status "loadCabal" 1 "(Re)loading cabal project settings"
-  void $ lift $ viewConfig setupConfigDirty >>= liftIO . tryTakeMVar
   resetFlags
+  void $ lift $ viewConfig setupConfigDirty >>= liftIO . tryTakeMVar
 
   (pkgDBs, tgts) <- liftIO $ runQuery ((,) <$> packageDBs <*> on localPkgDesc targets) "dist/setup-config"
   tgts' <- liftIO $ mapM TM.canonicalizeTarget tgts
