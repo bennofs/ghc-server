@@ -23,7 +23,7 @@ import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Base
 import           Control.Monad.Extra
-import           Control.Monad.Identity
+import qualified Control.Monad.Identity as I
 import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Control.Monad.State
@@ -119,8 +119,8 @@ instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t), MonadIO (Serv
   setSession s = viewConfig ghcSession >>= liftIO . flip writeIORef s
                                               
 -- | Execute an action on the current environment in the GhcServerM monad.
-withEnv :: MFunctor (t Env) => t Env Identity a -> GhcServerM t a
-withEnv = GhcServerM . hoist (return . runIdentity)
+withEnv :: MFunctor (t Env) => t Env I.Identity a -> GhcServerM t a
+withEnv = GhcServerM . hoist (return . I.runIdentity)
 
 -- | View the part of the config viewed by the given Getting in the GhcServerM monad.
 viewConfig :: MonadTrans (t Env) => Getting a Config a -> GhcServerM t a
