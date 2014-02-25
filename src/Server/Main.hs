@@ -10,10 +10,9 @@ import           Control.Monad
 import           Daemon (ControlMessage(..))
 import qualified Data.DList as DL
 import qualified Data.Text as T
-import           Data.Void
 import           Message
 import           Pipes
-import           Pipes.Core ((//>))
+import           Pipes.Core ((//>), closed)
 import qualified Pipes.Prelude as P
 import           Server.Compile
 import           Server.Configure
@@ -30,7 +29,7 @@ serve inp outp ctrl = runServer $ do
     runHandler initFlags
     runEffect $ for (hoist liftIO inp) (\req -> 
                       handleRequest req 
-                  >-> eitherP (\x -> yield x >-> (hoist liftIO ctrl //> absurd)) (yield . Right . msg)
+                  >-> eitherP (\x -> yield x >-> (hoist liftIO ctrl //> closed)) (yield . Right . msg)
                   >>= yield . bimap finish finish)
             >-> (takeWhileRight >>= yield) 
             >-> hoist liftIO outp

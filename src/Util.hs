@@ -4,7 +4,6 @@ module Util
   ) where
 
 import Control.Monad
-import Data.Void
 import Pipes
 import Pipes.Core
 
@@ -28,6 +27,6 @@ eitherP :: Monad m => (a -> Server x' x m ()) -> (b -> Server x' x m ()) -> Prox
 eitherP f g = do
   e <- await
   case e of
-    Left a -> absurd >\\ f a
-    Right b -> absurd >\\ g b
+    Left a -> closed >\\ f a
+    Right b -> closed >\\ g b
   eitherP f g

@@ -49,7 +49,7 @@ executable ghc-server
     , filepath
     , directory
     , containers
-    , pipes >= 4.0
+    , pipes >= 4.1
     , pipes-concurrency
     , pipes-network
     , pipes-aeson
