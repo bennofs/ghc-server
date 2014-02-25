@@ -100,7 +100,7 @@ loadCabal = do
   status "loadCabal" 2 $ "Using package databases: " <> T.pack (show pkgDBs)
   lift $ onlyPackageDBs pkgDBs
 
-  importDirs <- liftIO $ filterM doesDirectoryExist $ "dist/build/autogen" : [p | tgt <- tgts, isLibrary tgt, p <- sourceDirs tgt]
+  importDirs <- liftIO $ filterM doesDirectoryExist $ "dist/build/autogen" : "dist/build" : [p | tgt <- tgts, isLibrary tgt, p <- sourceDirs tgt]
   status "loadCabal" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
 
   let deps = [n ++ '-':showVersion v | (n, Just v) <- concatMap dependencies tgts]
