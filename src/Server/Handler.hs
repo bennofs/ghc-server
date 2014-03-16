@@ -45,6 +45,7 @@ import qualified MonadUtils
 import qualified Panic
 import           Server.Errors
 import qualified Server.TargetMap as TM
+import qualified SysTools
 import           System.Directory
 import           System.FilePath
 import           System.INotify
@@ -137,7 +138,11 @@ type Server = GhcServerM StateT
 runHandler :: Handler a -> Server a
 runHandler (GhcServerM h) = do
   s <- withEnv get
-  GhcServerM $ lift $ runReaderT h s
+  r <- GhcServerM $ lift $ runReaderT h s
+  dflags <- GHC.getSessionDynFlags
+  MonadUtils.liftIO $ SysTools.cleanTempFiles dflags
+  MonadUtils.liftIO $ SysTools.cleanTempDirs dflags
+  return r
 
 -- | Run the server monad. This takes care of running the ghc monad. It does not set exceptions handlers, however.
 runServer :: Server a -- ^ The action to run
