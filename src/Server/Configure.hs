@@ -140,14 +140,15 @@ withFileOptions path action = do
   tgts <- lift $ withEnv $ views cabalTargets $ TM.lookupBest path
 
   includeDirs <- liftIO $ filterM doesFileExist ["dist/build/autogen/cabal_macros.h"]
-  status "loadCabal" 2 $ "Including files: " <> T.pack (unwords includeDirs)
+  status "loadFileOptions" 2 $ "Including files: " <> T.pack (unwords includeDirs)
 
   importDirs <- liftIO $ filterM doesDirectoryExist ["dist/build/autogen"]
-  status "loadCabal" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
+  status "loadFileOptions" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
   
   let imps = concatMap sourceDirs tgts
-      opts = concatMap ghcOptions tgts
+      opts = concatMap (ghcOptions <> (map ("-X" ++) . extensions)) tgts
   status "loadFileOptions" 3 $ "Using import search path: " <> T.pack (unwords imps)
+  status "loadFileOptions" 3 $ "Using ghc options: " <> T.pack (unwords opts)
 
   dflags <- lift GHC.getSessionDynFlags
   (dflags', _, _) <- GHC.parseDynamicFlags dflags $ map GHC.noLoc opts 
@@ -157,6 +158,7 @@ withFileOptions path action = do
     , DynFlags.settings = (DynFlags.settings dflags')
         { DynFlags.sOpt_P = reverse $ concatMap (\x -> ["-include", x]) includeDirs
         }
+    , DynFlags.optLevel = 0
     }
 
   lift $ action `GHC.gfinally` setSessionDynFlags' dflags
