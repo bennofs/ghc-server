@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
-module Server.Configure 
+module Server.Configure
   ( loadCabal
   , reloadPkgDBs
   , initFlags
@@ -20,6 +20,8 @@ import           Control.Monad.IO.Class
 import           Data.List
 import           Data.Monoid
 import qualified Data.Text as T
+import qualified ObjLink
+import System.FilePath
 #if __GLASGOW_HASKELL__ >= 706
 import           Data.Time
 #else
@@ -48,7 +50,7 @@ initFlags = do
   void $ GHC.setSessionDynFlags dflags'
     { GHC.ghcLink = GHC.NoLink
     , GHC.hscTarget = GHC.HscInterpreted
-    , GHC.log_action = collectErrors errs                   
+    , GHC.log_action = collectErrors errs
     }
 
 addFlags :: [String] -> Server (Maybe String)
@@ -85,6 +87,14 @@ onlyPackageDBs dbs = do
     { GHC.pkgDatabase = Nothing
     }
 
+-- | Find all object files in the given directory, recursively.
+findObjectFiles :: FilePath -> IO [FilePath]
+findObjectFiles dir = do
+  contents <- map (dir </>) . filter (not . (`elem` [".", ".."])) <$> getDirectoryContents dir
+  files <- filter (".o" `isSuffixOf`) <$> filterM doesFileExist contents
+  files' <- filterM doesDirectoryExist contents >>= mapM findObjectFiles
+  return $ concat $ files : files'
+
 -- | Load settings from the cabal project. This assumes that the file "dist/setup-config" exists and the
 -- current directory is the root of the project.
 loadCabal :: Producer Message Server ()
@@ -100,17 +110,30 @@ loadCabal = do
   status "loadCabal" 2 $ "Using package databases: " <> T.pack (show pkgDBs)
   lift $ onlyPackageDBs pkgDBs
 
+  includeDirs <- liftIO $ filterM doesFileExist ["dist/build/autogen/cabal_macros.h"]
+  status "loadCabal" 2 $ "Including files: " <> T.pack (unwords includeDirs)
+
   importDirs <- liftIO $ filterM doesDirectoryExist $ "dist/build/autogen" : "dist/build" : [p | tgt <- tgts, isLibrary tgt, p <- sourceDirs tgt]
   status "loadCabal" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
 
+  objs <- liftIO $ fmap concat $ mapM (findObjectFiles . ("dist/build" </>)) $ filter (/= ".") $ filter isLibrary tgts >>= sourceDirs
+  status "loadCabal" 2 $ "Found object files: " <> T.pack (unwords objs)
+
   let deps = [n ++ '-':showVersion v | (n, Just v) <- concatMap dependencies tgts]
   status "loadCabal" 2 $ "Using dependencies: " <> T.pack (unwords deps)
-  
+
   status "loadCabal" 2 "Applying settings"
   dflags <- lift GHC.getSessionDynFlags
+  s <- liftIO $ mapM_ ObjLink.loadObj objs >> ObjLink.resolveObjs
+  case s of
+    GHC.Succeeded -> status "loadCabal" 3 "Link success"
+    GHC.Failed -> status "loadCabal" 3 "Link failure"
   lift $ void $ GHC.setSessionDynFlags $ (DynFlags.dopt_set dflags GHC.Opt_HideAllPackages)
-    { DynFlags.packageFlags = map DynFlags.ExposePackage deps 
-    , DynFlags.importPaths = importDirs 
+    { DynFlags.packageFlags = map DynFlags.ExposePackage deps
+    , DynFlags.importPaths = importDirs
+    , DynFlags.settings = (DynFlags.settings dflags)
+        { DynFlags.sOpt_P = reverse $ concatMap (\x -> ["-include", x]) includeDirs
+        }
     }
 
 -- | Like setSessionDynFlags, but does not reload the package database / state.
@@ -119,7 +142,7 @@ setSessionDynFlags' dflags = do
   GhcMonad.modifySession (\h -> h
     { HscTypes.hsc_dflags = dflags
 #if __GLASGOW_HASKELL__ >= 706
-    , HscTypes.hsc_IC = (HscTypes.hsc_IC h){ HscTypes.ic_dflags = dflags } 
+    , HscTypes.hsc_IC = (HscTypes.hsc_IC h){ HscTypes.ic_dflags = dflags }
 #endif
     })
   invalidateModSummaryCache
@@ -139,25 +162,21 @@ withFileOptions path action = do
   status "loadFileOptions" 2 $ "Loading cabal options for file " <> T.pack (show path) <> " ..."
   tgts <- lift $ withEnv $ views cabalTargets $ TM.lookupBest path
 
-  includeDirs <- liftIO $ filterM doesFileExist ["dist/build/autogen/cabal_macros.h"]
-  status "loadFileOptions" 2 $ "Including files: " <> T.pack (unwords includeDirs)
+  let usableOpt ('-':'O':_) = False
+      usableOpt "-rtsopts" = False
+      usableOpt _ = True
 
-  importDirs <- liftIO $ filterM doesDirectoryExist ["dist/build/autogen"]
-  status "loadFileOptions" 2 $ "Using import search path: " <> T.pack (unwords importDirs)
-  
   let imps = concatMap sourceDirs tgts
-      opts = concatMap (ghcOptions <> (map ("-X" ++) . extensions)) tgts
-  status "loadFileOptions" 3 $ "Using import search path: " <> T.pack (unwords imps)
-  status "loadFileOptions" 3 $ "Using ghc options: " <> T.pack (unwords opts)
+      opts = filter usableOpt $ concatMap (ghcOptions <> (map ("-X" ++) . extensions)) tgts
+
+  status "loadFileOptions" 3 $ "Adding import search path: " <> T.pack (unwords imps)
+  status "loadFileOptions" 3 $ "Adding ghc options: " <> T.pack (unwords opts)
 
   dflags <- lift GHC.getSessionDynFlags
-  (dflags', _, _) <- GHC.parseDynamicFlags dflags $ map GHC.noLoc opts 
-  
+  (dflags', _, _) <- GHC.parseDynamicFlags dflags $ map GHC.noLoc opts
+
   lift $ void $ setSessionDynFlags' $ dflags'
-    { DynFlags.importPaths = DynFlags.importPaths dflags ++ imps ++ importDirs
-    , DynFlags.settings = (DynFlags.settings dflags')
-        { DynFlags.sOpt_P = reverse $ concatMap (\x -> ["-include", x]) includeDirs
-        }
+    { DynFlags.importPaths = DynFlags.importPaths dflags' ++ imps
     , DynFlags.optLevel = 0
     }
 
@@ -178,7 +197,7 @@ reloadPkgDBs = do
 --
 -- Note: This will re-read the package database.
 resetFlags :: Producer Message Server ()
-resetFlags = do 
+resetFlags = do
   status "resetFlags" 1 "Resetting flags ..."
   lift $ do
     GHC.initGhcMonad $ Just GHC.Paths.libdir
@@ -207,7 +226,7 @@ clearPackageDBs :: DynFlags.DynFlags -> DynFlags.DynFlags
 clearPackageDBs dflags = dflags { GHC.extraPkgConfs = const [] }
 #else
 getPackageDatabases :: DynFlags.DynFlags -> [PackageDB]
-getPackageDatabases dflags = GlobalDB : mconcat 
+getPackageDatabases dflags = GlobalDB : mconcat
   [ [UserDB | DynFlags.dopt DynFlags.Opt_ReadUserPackageConf dflags]
   , map SpecificDB $ DynFlags.extraPkgConfs dflags
   ]
@@ -220,4 +239,3 @@ addPackageDB' (SpecificDB x) dflags = dflags { GHC.extraPkgConfs = x : GHC.extra
 clearPackageDBs :: DynFlags.DynFlags -> DynFlags.DynFlags
 clearPackageDBs dflags = (DynFlags.dopt_unset dflags DynFlags.Opt_ReadUserPackageConf) { GHC.extraPkgConfs = [] }
 #endif
-
