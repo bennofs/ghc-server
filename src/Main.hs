@@ -2,8 +2,7 @@
 {-# LANGUAGE TupleSections      #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE RankNTypes         #-}
-{-# LANGUAGE FlexibleInstances #-}
-
+{-# LANGUAGE FlexibleInstances  #-}
 import           Control.Concurrent (threadDelay)
 import qualified Control.Exception as E
 import           Control.Lens hiding (argument)
@@ -18,7 +17,7 @@ import           Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import           Message
-import           Options.Applicative hiding ((&))
+import           Options.Applicative hiding ((&), ParserResult(..))
 import           Pipes
 import           Server.Main
 import           System.Directory
@@ -52,7 +51,7 @@ sharedOptions = SharedOptions
 -- | Configure options for the client's pipeline.
 data Config = Config
   { -- | Function to start the server in case it's not already running
-    _serverStarter  :: Server Request Response -> FilePath -> IO () 
+    _serverStarter  :: Server Request Response -> FilePath -> IO ()
   , _onSuccess      :: IO ()     -- ^ Action to be executed if the server returned Success
   , _onFailure      :: IO ()     -- ^ Action to be executed if the server returned Failure
   , _onStartFailure :: IO ()     -- ^ Action to be executed if the starting the server failed
@@ -96,11 +95,11 @@ adminCmd = info (helper <*> cmd) $ fullDesc <> progDesc "command the server"
            , commandConfig  "stop"   shutdownConfig  $ briefDesc <> progDesc "stop the server"
            , commandConfig  "reset"  resetConfig     $ briefDesc <> progDesc "reset the GHC options used by the server and reload the cabal file"
            , commandConfig  "status" statusConfig    $ briefDesc <> progDesc "check whether the server is running or not"
-           , commandConfigM "ghc"    ghcParser       $ fullDesc  <> progDesc "add GHC options for compiling"                          
+           , commandConfigM "ghc"    ghcParser       $ fullDesc  <> progDesc "add GHC options for compiling"
            ]
 
         startParser = startConfig <$> switch (short 'd' <> long "no-daemon" <> help "Do not daemonize")
-           
+
         startConfig nd = customConfig $ \opts -> do
           when nd $ serverStarter .= \s p ->
             E.bracket (bindUnixSocket p) (maybe (return ()) $ closeUnixSocket p) $ \sock -> case sock of
@@ -112,20 +111,20 @@ adminCmd = info (helper <*> cmd) $ fullDesc <> progDesc "command the server"
 
         shutdownConfig = customConfig $ \opts -> do
           serverStarter .= \_ _ -> logClient opts 0 "Server is not running." >> exitSuccess
-          onSuccess     .= do 
+          onSuccess     .= do
             whileM_ (doesFileExist $ opts^.socketFile) $ threadDelay 100000
             logClient opts 0 "Server stopped."
           onFailure     .= logClient opts 0 "Failed to stop server."
           request       .= Shutdown
-                                       
+
         resetConfig = customConfig $ const $ request .= EnvChange ResetGhcArgs
 
         statusConfig = customConfig $ \opts -> do
           serverStarter .= \_ _ -> logClient opts 0 "Server is not running." >> exitFailure
           onSuccess     .= logClient opts 0 "Server is running."
-        
+
         ghcParser = requestConfig . EnvChange . AddGhcArgs . map ('-':)
-                 <$> arguments Just (metavar "FLAG" <> help "a GHC flag, without the leading dash")
+                 <$> many (argument Just (metavar "FLAG" <> help "a GHC flag, without the leading dash"))
 
 checkCmd :: FilePath -> ParserInfo ConfigO
 checkCmd pwd = info (helper <*> cmd) $ fullDesc <> progDesc "check a file for errors and warnings"
@@ -176,7 +175,7 @@ main = do
       addTimeoutOpt (Just t) | t == 0 = Multiple [EnvChange $ SuicideTimeout Nothing, req'']
                              | otherwise = Multiple [EnvChange $ SuicideTimeout $ Just t, req'']
       addTimeoutOpt _ = req''
-      req''' = addTimeoutOpt (options^.serverTimeout) 
+      req''' = addTimeoutOpt (options^.serverTimeout)
 
   unless (options^.disableCabal) $
     when (req^.searchCabal) $ findCabal pwd >>= maybe (return ()) setCurrentDirectory
