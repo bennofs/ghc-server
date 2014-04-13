@@ -90,10 +90,14 @@ onlyPackageDBs dbs = do
 -- | Find all object files in the given directory, recursively.
 findObjectFiles :: FilePath -> IO [FilePath]
 findObjectFiles dir = do
-  contents <- map (dir </>) . filter (not . (`elem` [".", ".."])) <$> getDirectoryContents dir
-  files <- filter (".o" `isSuffixOf`) <$> filterM doesFileExist contents
-  files' <- filterM doesDirectoryExist contents >>= mapM findObjectFiles
-  return $ concat $ files : files'
+  exists <- doesDirectoryExist dir
+  if not exists
+    then return []
+    else do
+      contents <- map (dir </>) . filter (not . (`elem` [".", ".."])) <$> getDirectoryContents dir
+      files <- filter (".o" `isSuffixOf`) <$> filterM doesFileExist contents
+      files' <- filterM doesDirectoryExist contents >>= mapM findObjectFiles
+      return $ concat $ files : files'
 
 -- | Load settings from the cabal project. This assumes that the file "dist/setup-config" exists and the
 -- current directory is the root of the project.
