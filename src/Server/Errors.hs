@@ -2,7 +2,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Pretty printing and formatting of GHC errors.
-module Server.Errors 
+module Server.Errors
   ( GHCError(), location, message, style
   , showError
   , collectErrors
@@ -22,6 +22,7 @@ import qualified FastString as FS
 import qualified GHC
 import           Message
 import qualified Outputable
+import qualified Pretty
 import qualified SrcLoc
 import           System.Exit
 import           System.FilePath
@@ -66,11 +67,19 @@ assertFull a = do
     putStrLn "Error: Error messages weren't initialized"
     exitFailure
 
+string_txt :: Pretty.TextDetails -> String -> String
+string_txt (Pretty.Chr c)   s  = c:s
+string_txt (Pretty.Str s1)  s2 = s1 ++ s2
+string_txt (Pretty.PStr s1) s2 = FS.unpackFS s1 ++ s2
+string_txt (Pretty.LStr s1 _) s2 = FS.unpackLitString s1 ++ s2
+
 -- | A GHC LogAction that collects all the errors and writes them to the given output sink.
 collectErrors :: MVar (DL.DList GHCError) -> DynFlags.LogAction
 #if __GLASGOW_HASKELL__ >= 706
 collectErrors out dflags sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
-  where err = GHCError sev sspan pprstyle m $ Outputable.renderWithStyle dflags
+  where err = GHCError sev sspan pprstyle m $ \doc -> showDoc . toDoc doc
+        toDoc doc style' = Outputable.runSDoc doc (Outputable.initSDocContext dflags style')
+        showDoc = Pretty.fullRender Pretty.PageMode (GHC.pprCols dflags) 1.5 string_txt ""
 #else
 collectErrors out sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m Outputable.renderWithStyle
