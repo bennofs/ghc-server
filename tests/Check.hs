@@ -37,7 +37,10 @@ copySources :: FilePath -> HClTest w ()
 copySources x = liftIO $ copyFilesHere (head getSrcDirs </> x)
 
 startServer :: HClTest Trace ()
-startServer = testExitCode Nothing 1000 ghcserver ["-v", "3","-f","log", "admin", "start"] ExitSuccess
+startServer = mapM_ (testExitCode Nothing 1000 ghcserver `flip` ExitSuccess)
+  [ ["-v", "3","-f","log", "admin", "start"]
+  , ["admin", "ghc", "dppr-cols=1000000"]
+  ]
 
 withLog :: HClTest Trace () -> HClTest Trace ()
 withLog x = x <|> showLog
@@ -64,9 +67,10 @@ findHaskellFiles dir = do
     ++ files'
 
 tests :: TestTree
-tests = testGroup "check" 
-  [ hcltest "without cabal" $ do 
+tests = testGroup "check"
+  [ hcltest "without cabal" $ do
       copySources "without-cabal"
+      startServer
       randomParallel 3 $ concat $ replicate 5
         [ testSuccess Nothing ["Sample1.hs"]
         , testSuccess Nothing ["Parent.hs"]
@@ -90,7 +94,7 @@ tests = testGroup "check"
   , hcltest "cabal project is server root" $ do
       copySources "cabal-project"
       startServer
-      forM_ ["src", "independent-src", "library-tests"] $ \dir ->  
+      forM_ ["src", "independent-src", "library-tests"] $ \dir ->
         testExitCode (Just dir) 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
 
   , hcltest "cabal project support" $ do
@@ -108,7 +112,7 @@ tests = testGroup "check"
         , testSuccess (Just "src") ["Data/SomeModule.hs"]
         , testSuccess Nothing ["library-tests/Main.hs"]
         , testSuccess Nothing ["src/LibraryModule.hs"]
-        ] 
+        ]
 
   , hcltest "self" $ do
       -- Copy ourselves, so we don't accidently mess up the project!
@@ -117,8 +121,8 @@ tests = testGroup "check"
           let source = head getSrcDirs </> ".." </> x
           e <- doesDirectoryExist source
           when e $ createDirectory x >> copyFiles source x
-        mapM_ (flip copyFile "." . (head getSrcDirs </>)) <=< filterM doesFileExist $ ["../ghc-server.cabal", "../Setup.hs", "../cabal.sandbox.config"] 
-        findHaskellFiles "src" 
+        mapM_ (flip copyFile "." . (head getSrcDirs </>)) <=< filterM doesFileExist $ ["../ghc-server.cabal", "../Setup.hs", "../cabal.sandbox.config"]
+        findHaskellFiles "src"
 
       let sources' = sources
                   ++ [ "tests/Admin.hs"
@@ -128,5 +132,3 @@ tests = testGroup "check"
                      ]
       randomParallel 3 $ concat $ replicate 5 $ map (testSuccess Nothing . (:[])) sources'
   ]
-
-
