@@ -17,11 +17,11 @@ ghcserver :: FilePath
 ghcserver = getDistDir </> "build/ghc-server/ghc-server"
 
 testFailure :: Int -> [String] -> HClTest Trace ()
-testFailure c a = testExitCode Nothing 1000 ghcserver (defaultOpts ++ a) $ ExitFailure c
+testFailure c a = testExitCode Nothing Nothing 1000 ghcserver (defaultOpts ++ a) $ ExitFailure c
   where defaultOpts = ["-v","3","admin"]
 
 testSuccess :: [String] -> HClTest Trace ()
-testSuccess a = testExitCode Nothing 1000 ghcserver (defaultOpts ++ a) ExitSuccess
+testSuccess a = testExitCode Nothing Nothing 1000 ghcserver (defaultOpts ++ a) ExitSuccess
   where defaultOpts = ["-v","3","admin"]
 
 tests :: TestTree
@@ -52,11 +52,11 @@ tests = testGroup "admin"
       testSuccess ["stop"]
       testFailure 1 ["status"]
 
-  , hcltest "timeout" $ do 
+  , hcltest "timeout" $ do
       testSuccess ["start"]
       liftIO $ threadDelay 2000000
       testSuccess ["status", "-t2"]
       liftIO $ threadDelay 3000000
       testFailure 1 ["status"]
       testIO "socket file doesn't exist anymore" $ fmap not $ doesFileExist ".ghc-server.sock"
-  ] 
+  ]

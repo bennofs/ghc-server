@@ -10,6 +10,7 @@ import           Data.List
 import           Data.Monoid
 import qualified Data.Text as T
 import           System.Directory
+import           System.Environment
 import           System.Exit
 import           System.FilePath
 import           Test.Tasty
@@ -26,18 +27,18 @@ ghcserver :: FilePath
 ghcserver = getDistDir </> "build/ghc-server/ghc-server"
 
 testFailure :: Maybe FilePath -> Int -> [String] -> HClTest Trace ()
-testFailure wd c a = withLog $ testExitCode wd 1000 ghcserver (defaultOpts ++ a) $ ExitFailure c
+testFailure wd c a = withLog $ testExitCode wd Nothing 1000 ghcserver (defaultOpts ++ a) $ ExitFailure c
   where defaultOpts = ["-v","3","-f","log","check"]
 
 testSuccess :: Maybe FilePath -> [String] -> HClTest Trace ()
-testSuccess wd a = withLog $ testExitCode wd 1000 ghcserver (defaultOpts ++ a) ExitSuccess
+testSuccess wd a = withLog $ testExitCode wd Nothing 1000 ghcserver (defaultOpts ++ a) ExitSuccess
   where defaultOpts = ["-v","3","-f", "log","check"]
 
 copySources :: FilePath -> HClTest w ()
 copySources x = liftIO $ copyFilesHere (head getSrcDirs </> x)
 
 startServer :: HClTest Trace ()
-startServer = mapM_ (testExitCode Nothing 1000 ghcserver `flip` ExitSuccess)
+startServer = mapM_ (testExitCode Nothing Nothing 1000 ghcserver `flip` ExitSuccess)
   [ ["-v", "3","-f","log", "admin", "start"]
   , ["admin", "ghc", "dppr-cols=1000000"]
   ]
@@ -50,7 +51,7 @@ withLog x = x <|> showLog
 testSampleError :: HClTest Trace ()
 testSampleError = do
   wd <- liftIO getCurrentDirectory
-  testStdout Nothing 1000 ghcserver ["-v","3","check","SampleError.hs"] (ExitFailure 1) $
+  testStdout Nothing Nothing 1000 ghcserver ["-v","3","check","SampleError.hs"] (ExitFailure 1) $
     T.pack (wd </> "SampleError.hs") <> ":9:5: Not in scope: `foo'" <> "\n"
 
 partitionM   :: Monad m => (a -> m Bool) -> [a] -> m ([a],[a])
@@ -65,6 +66,15 @@ findHaskellFiles dir = do
   return $
        map (dir </>) (filter (liftM2 (||) (".hs" `isSuffixOf`) (".hsc" `isSuffixOf`)) files)
     ++ files'
+
+getCleanEnvironment :: IO [(String, String)]
+getCleanEnvironment = do
+  env <- liftIO getEnvironment
+  home <- liftIO getCurrentDirectory
+  let keepEnvNames = ["PATH"]
+      env' = filter ((`elem` keepEnvNames) . fst) env
+             ++ [("HOME", home)]
+  return env'
 
 tests :: TestTree
 tests = testGroup "check"
@@ -81,30 +91,31 @@ tests = testGroup "check"
   , hcltest "package db reloading" $ do
       copySources "db-reloading"
       startServer
-      testExitCode Nothing 1000 "ghc-pkg" ["init", "pkgdb"] ExitSuccess
-      testExitCode Nothing 1000 ghcserver ["-v", "3", "admin", "ghc", packagedb ++ " pkgdb"] ExitSuccess
+      testExitCode Nothing Nothing 1000 "ghc-pkg" ["init", "pkgdb"] ExitSuccess
+      testExitCode Nothing Nothing 1000 ghcserver ["-v", "3", "admin", "ghc", packagedb ++ " pkgdb"] ExitSuccess
       testFailure Nothing 1 ["Main.hs"]
-      -- WORKAROUND: There is a crazy bug in cabal 1.16 where installing directly (without going through unpack first)
-      -- causes ghc-pkg to fail with a file not found error.
-      testExitCode Nothing 1000 "cabal" ["unpack", "acme-dont-1.1"] ExitSuccess
-      testExitCode (Just "acme-dont-1.1") 1000 "cabal" ["install", "--package-db=clear", "--package-db=global", "--package-db=../pkgdb"] ExitSuccess
-      testExitCode Nothing 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
+      env <- liftIO getCleanEnvironment
+      testExitCode (Just "acme-dont-1.1") (Just env) 1000
+        "cabal" ["--config-file=cabal.config", "install", "--package-db=clear", "--package-db=global", "--package-db=../pkgdb"]
+        ExitSuccess
+      testExitCode Nothing Nothing 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
       testSuccess Nothing ["Main.hs"]
 
   , hcltest "cabal project is server root" $ do
       copySources "cabal-project"
       startServer
       forM_ ["src", "independent-src", "library-tests"] $ \dir ->
-        testExitCode (Just dir) 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
+        testExitCode (Just dir) Nothing 1000 ghcserver ["-v", "3", "admin", "status"] ExitSuccess
 
   , hcltest "cabal project support" $ do
       copySources "cabal-project"
       startServer
       testFailure Nothing 1 ["src/LibraryModule.hs"]
       -- Test cabal reloading
-      testExitCode Nothing 1000 "cabal" ["configure", "--enable-tests", "--enable-benchmarks"] ExitSuccess
+      env <- liftIO getCleanEnvironment
+      testExitCode Nothing (Just env) 1000 "cabal" ["configure", "--enable-tests", "--enable-benchmarks"] ExitSuccess
       -- Test that the project is actually buildable, and also preprocess the sources (and generate autogen files)
-      testExitCode Nothing 1000 "cabal" ["build"] ExitSuccess
+      testExitCode Nothing Nothing 1000 "cabal" ["build"] ExitSuccess
       randomParallel 3 $ concat $ replicate 5
         [ testSuccess (Just "library-tests")  ["Main.hs"]
         , testSuccess (Just "independent-src") ["Main.hs"]
