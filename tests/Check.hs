@@ -113,6 +113,8 @@ tests = testGroup "check"
       testFailure Nothing 1 ["src/LibraryModule.hs"]
       -- Test cabal reloading
       env <- liftIO getCleanEnvironment
+      testExitCode Nothing (Just env) 3600 "cabal" ["sandbox", "init"] ExitSuccess
+      testExitCode Nothing (Just env) 3600 "cabal" ["install", "--enable-tests", "--enable-benchmarks", "--only-dependencies"] ExitSuccess
       testExitCode Nothing (Just env) 1000 "cabal" ["configure", "--enable-tests", "--enable-benchmarks"] ExitSuccess
       -- Test that the project is actually buildable, and also preprocess the sources (and generate autogen files)
       testExitCode Nothing Nothing 1000 "cabal" ["build"] ExitSuccess
