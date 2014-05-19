@@ -82,6 +82,9 @@ stringTxt (Pretty.Chr c)   s  = c:s
 stringTxt (Pretty.Str s1)  s2 = s1 ++ s2
 stringTxt (Pretty.PStr s1) s2 = FS.unpackFS s1 ++ s2
 stringTxt (Pretty.LStr s1 _) s2 = FS.unpackLitString s1 ++ s2
+#if __GLASGOW_HASKELL >= 708
+stringTxt (Pretty.ZStr s1) s2 = FS.zString s1 ++ s2
+#endif
 #else
 collectErrors out sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m Outputable.renderWithStyle
