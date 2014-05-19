@@ -55,7 +55,7 @@ import           System.Info
 -- change between requests.
 data Env = Env
   { -- | We save the working directory of the client so we can resolve the paths sent from the client and also give good error messages.
-    _workingDirectory :: !FilePath    
+    _workingDirectory :: !FilePath
 
     -- | IO actions that disable watching the given package database.
   , _packageDBWatchers :: !(M.Map PackageDB (IO ()))
@@ -71,12 +71,12 @@ makeLenses ''Env
 instance Default Env where def = Env def M.empty TM.empty True
 
 -- | This type represents the configuration of the server. It stays constant for the whole run time of the server, and does not
--- change between requests. 
+-- change between requests.
 data Config = Config
   { _ghcSession        :: !(IORef HscTypes.HscEnv)
   , _errors            :: !(MVar (DL.DList GHCError))
   , _setupConfigDirty  :: !(MVar ())
-  , _packageDBDirty    :: !(MVar ())  
+  , _packageDBDirty    :: !(MVar ())
   , _inotify           :: !INotify
   }
 makeLenses ''Config
@@ -103,7 +103,7 @@ instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t)) => MonadBaseC
   restoreM (StServer s) = GhcServerM $ restoreM s
   liftBaseWith f = GhcServerM $ liftBaseWith (\g -> f $ liftM StServer . g . unGhcServerM)
 
-#if __GLASGOW_HASKELL__ <= 708
+#if __GLASGOW_HASKELL__ < 708
 instance MonadIO (GhcServerM t) => MonadUtils.MonadIO (GhcServerM t) where
   liftIO = Control.Monad.Reader.liftIO
 #endif
@@ -120,7 +120,7 @@ instance GhcMonad.GhcMonad (GhcServerM t) => DynFlags.HasDynFlags (GhcServerM t)
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t), MonadIO (ServerCoreM t)) => GhcMonad.GhcMonad (GhcServerM t) where
   getSession = viewConfig ghcSession >>= liftIO . readIORef
   setSession s = viewConfig ghcSession >>= liftIO . flip writeIORef s
-                                              
+
 -- | Execute an action on the current environment in the GhcServerM monad.
 withEnv :: MFunctor (t Env) => t Env I.Identity a -> GhcServerM t a
 withEnv = GhcServerM . hoist (return . I.runIdentity)
@@ -158,7 +158,7 @@ runServer s = do
   let stopWatching = do
         finalizers <- withEnv $ uses packageDBWatchers M.elems
         liftIO $ sequence_ finalizers >> putStrLn "Shutdown of Server monad finished."
-  
+
   putStrLn $ "Using libdir: " ++ GHC.Paths.libdir
   withINotify $ \ino -> do
     res <- flip runReaderT (Config ses errs setupConfDirty pkgDBDirty ino) $ flip evalStateT def $ unGhcServerM $ flip E.finally stopWatching $ do
@@ -167,7 +167,7 @@ runServer s = do
       mapM_ watchPackageDB [GlobalDB, UserDB]
       watchCabal setupConfDirty
       GHC.defaultCleanupHandler dflags s
- 
+
     res <$ putStrLn "Exiting runServer"
 
 -- | Resolve a relative file name, producing an absolute file name.
@@ -230,18 +230,18 @@ watchPathChanges ino isDir path action = onExists ino isDir path $ do
 watchPackageDB :: PackageDB -> Server ()
 watchPackageDB db = do
   path <- packageDBPath db
-  case path of 
+  case path of
     Nothing -> return ()
     Just path' -> do
       mans <- withEnv $ use packageDBWatchers
       packageDBChanged <- viewConfig packageDBDirty
       ino <- viewConfig inotify
 
-      unless (M.member db mans) $ do 
+      unless (M.member db mans) $ do
         man <- liftIO $ watchPathChanges ino Nothing path' $ void $ tryPutMVar packageDBChanged ()
         withEnv $ packageDBWatchers.at db ?= man
 
--- | Stop watching a package db. After calling this function, the packageDBDirty IORef won't be 
+-- | Stop watching a package db. After calling this function, the packageDBDirty IORef won't be
 -- set anymore when the DB is changed.
 unwatchPackageDB :: PackageDB -> Server ()
 unwatchPackageDB db = do
