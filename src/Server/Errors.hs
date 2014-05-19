@@ -22,10 +22,12 @@ import qualified FastString as FS
 import qualified GHC
 import           Message
 import qualified Outputable
-import qualified Pretty
 import qualified SrcLoc
 import           System.Exit
 import           System.FilePath
+#if __GLASGOW_HASKELL__ >= 706
+import qualified Pretty
+#endif
 
 -- | A data type holding all the information of a GHC error message.
 data GHCError = GHCError
