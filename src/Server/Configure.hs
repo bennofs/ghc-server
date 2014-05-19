@@ -161,7 +161,7 @@ invalidateModSummaryCache = GhcMonad.modifySession $ \h -> h { HscTypes.hsc_mod_
 #if __GLASGOW_HASKELL__ >= 706
   inval ms = ms { HscTypes.ms_hs_date = addUTCTime (-1) (HscTypes.ms_hs_date ms) }
 #else
-  inval ms = ms { HscTypes.ms_hs_date = addToClockTime (TimeDiff 0 0 0 0 0 0 (-1)) (HscTypes.ms_hs_date ms) }
+  inval ms = ms { HscTypes.ms_hs_date = addToClockTime (TimeDiff 0 0 0 0 0 (-1) 0) (HscTypes.ms_hs_date ms) }
 #endif
 
 -- | Loads the cabal options for a given file. The argument should be an absolute file name.
