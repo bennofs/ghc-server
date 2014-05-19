@@ -103,8 +103,10 @@ instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t)) => MonadBaseC
   restoreM (StServer s) = GhcServerM $ restoreM s
   liftBaseWith f = GhcServerM $ liftBaseWith (\g -> f $ liftM StServer . g . unGhcServerM)
 
+#if __GLASGOW_HASKELL__ <= 708
 instance MonadIO (GhcServerM t) => MonadUtils.MonadIO (GhcServerM t) where
   liftIO = Control.Monad.Reader.liftIO
+#endif
 
 instance (MonadTrans (t Env), MonadBaseControl IO (ServerCoreM t)) => Exception.ExceptionMonad (GhcServerM t) where
   gcatch = E.catch

@@ -132,7 +132,11 @@ loadCabal = do
   case s of
     GHC.Succeeded -> status "loadCabal" 3 "Link success"
     GHC.Failed -> status "loadCabal" 3 "Link failure"
+#if __GLASGOW_HASKELL__ >= 708
+  lift $ void $ GHC.setSessionDynFlags $ (DynFlags.gopt_set dflags DynFlags.Opt_HideAllPackages)
+#else
   lift $ void $ GHC.setSessionDynFlags $ (DynFlags.dopt_set dflags GHC.Opt_HideAllPackages)
+#endif
     { DynFlags.packageFlags = map DynFlags.ExposePackage deps
     , DynFlags.importPaths = importDirs
     , DynFlags.settings = (DynFlags.settings dflags)
