@@ -56,7 +56,7 @@ tests = testGroup "admin"
       testSuccess ["start"]
       liftIO $ threadDelay 2000000
       testSuccess ["status", "-t2"]
-      liftIO $ threadDelay 3000000
+      liftIO $ threadDelay 3500000
       testFailure 1 ["status"]
       testIO "socket file doesn't exist anymore" $ fmap not $ doesFileExist ".ghc-server.sock"
   ]
