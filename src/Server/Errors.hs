@@ -67,19 +67,19 @@ assertFull a = do
     putStrLn "Error: Error messages weren't initialized"
     exitFailure
 
-string_txt :: Pretty.TextDetails -> String -> String
-string_txt (Pretty.Chr c)   s  = c:s
-string_txt (Pretty.Str s1)  s2 = s1 ++ s2
-string_txt (Pretty.PStr s1) s2 = FS.unpackFS s1 ++ s2
-string_txt (Pretty.LStr s1 _) s2 = FS.unpackLitString s1 ++ s2
-
 -- | A GHC LogAction that collects all the errors and writes them to the given output sink.
 collectErrors :: MVar (DL.DList GHCError) -> DynFlags.LogAction
 #if __GLASGOW_HASKELL__ >= 706
 collectErrors out dflags sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m $ \doc -> showDoc . toDoc doc
         toDoc doc style' = Outputable.runSDoc doc (Outputable.initSDocContext dflags style')
-        showDoc = Pretty.fullRender Pretty.PageMode (GHC.pprCols dflags) 1.5 string_txt ""
+        showDoc = Pretty.fullRender Pretty.PageMode (GHC.pprCols dflags) 1.5 stringTxt ""
+
+stringTxt :: Pretty.TextDetails -> String -> String
+stringTxt (Pretty.Chr c)   s  = c:s
+stringTxt (Pretty.Str s1)  s2 = s1 ++ s2
+stringTxt (Pretty.PStr s1) s2 = FS.unpackFS s1 ++ s2
+stringTxt (Pretty.LStr s1 _) s2 = FS.unpackLitString s1 ++ s2
 #else
 collectErrors out sev sspan pprstyle m = assertFull out >> void (modifyMVar_ out $ return . (`DL.snoc` err))
   where err = GHCError sev sspan pprstyle m Outputable.renderWithStyle
