@@ -82,7 +82,7 @@ stringTxt (Pretty.Chr c)   s  = c:s
 stringTxt (Pretty.Str s1)  s2 = s1 ++ s2
 stringTxt (Pretty.PStr s1) s2 = FS.unpackFS s1 ++ s2
 stringTxt (Pretty.LStr s1 _) s2 = FS.unpackLitString s1 ++ s2
-#if __GLASGOW_HASKELL >= 708
+#if __GLASGOW_HASKELL__ >= 708
 stringTxt (Pretty.ZStr s1) s2 = FS.zString s1 ++ s2
 #endif
 #else
